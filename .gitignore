@@ -1,0 +1,113 @@
+# ROCmForge .gitignore
+# Only source code and essential project files should be pushed to GitHub
+
+# Rust build artifacts
+/target/
+**/*.rs.bk
+*.pdb
+
+# Cargo cache and registry
+.cargo/
+.cargo/registry/
+.cargo/git/
+
+# Cargo lock for libraries (keep for binaries)
+# Cargo.lock
+
+# Compiled binaries and executables
+minimal_test
+simple_test
+*.exe
+*.out
+*.app
+
+# Object files and intermediate build artifacts
+*.o
+*.a
+*.so
+*.dylib
+*.dll
+*.rcgu.o
+
+# Debug symbols
+*.dSYM/
+
+# Python files (test/debug scripts)
+*.py
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+
+# ROCm/HIP specific
+*.cubin
+*.fatbin
+*.ptx
+*.sass
+
+# IDE and editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+*.iml
+
+# Research and documentation (not pushed per user request)
+/research/
+
+# Test data and temporary files
+*.log
+*.tmp
+*.temp
+*.bak
+*.cache
+
+# Benchmark results
+/benches/results/
+
+# GGUF model files and large binaries
+*.gguf
+*.bin
+*.safetensors
+*.onnx
+*.pth
+*.pt
+
+# Memory dumps and profiling data
+*.hprof
+*.prof
+perf.data*
+massif.out.*
+
+# OS generated files
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+
+# Backup files
+*~
+*.orig
+*.rej
+
+# Compiled Object files
+*.slo
+*.lo
+
+# Distribution / packaging
+dist/
+build/
+*.egg-info/
+
+# Coverage reports
+*.gcov
+*.gcda
+*.gcno
+coverage/
+htmlcov/
+
+# Local environment
+.env
+.env.local
