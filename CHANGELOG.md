@@ -132,6 +132,81 @@ test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured
 
 ## [Unreleased] - 2026-01-03
 
+### Phase 4 Post-Closure: Invariants + Regression Tests
+
+**Summary**: Documented critical FFI and reduction invariants, added regression tests to prevent CPU fallback re-introduction.
+
+#### Files Created
+
+| File | Lines | Purpose |
+|------|-------|---------|
+| `src/mlp/gpu_path_regression_tests.rs` | 146 | Regression tests for GPU-only path |
+
+#### Files Modified
+
+| File | Lines Changed | Purpose |
+|------|---------------|---------|
+| `src/mlp/kernels.rs` | +52 | Added invariant documentation |
+| `src/mlp/mod.rs` | +3 | Added regression test module |
+
+#### Invariants Documented
+
+**FFI Wrapper Invariant**:
+> ALL kernel arguments (including pointers) MUST be copied to intermediate mutable variables before passing to HIP kernels.
+
+```rust
+// CORRECT
+let mut gate_arg = gate as *mut f32;
+let args: &[*mut c_void] = &[&mut gate_arg as *mut _ as *mut c_void, ...];
+
+// WRONG - causes "Memory access fault by GPU node-1"
+let args: &[*mut c_void] = &[gate as *mut c_void, ...];
+```
+
+**Reduction Invariant**:
+> For parallel reduction using shared memory, starting stride MUST be `BLOCK_SIZE / 2` to ensure all elements participate.
+
+```cpp
+// CORRECT - processes all 256 elements
+for (int stride = BLOCK_SIZE / 2; stride > 0; stride >>= 1) { ... }
+
+// WRONG - only processes 31 elements for BLOCK_SIZE=256
+for (int stride = 16; stride > 0; stride >>= 1) { ... }
+```
+
+#### Regression Tests Added (3/3 passing)
+
+- `test_mlp_swiglu_gpu_only_path` - Verifies GPU pointers are valid
+- `test_gpu_to_gpu_copy` - Verifies `hipMemcpyDeviceToDevice` is used
+- `test_no_host_roundtrip_in_mlp_layer` - Documents expected code path
+
+#### Technical Debt Noted
+
+Several kernels use hardcoded `stride=16` which only processes 31 elements for `BLOCK_SIZE=256`:
+- `kernels/softmax.hip` (lines 61, 81)
+- `kernels/flash_attention.hip` (lines 135, 179, 201, 239)
+- `kernels/qkt_matmul.hip` (line 116)
+- `kernels/weighted_matmul.hip` (line 99)
+- `kernels/flash_attention_nocausal.hip` (line 141)
+- `kernels/flash_attention_causal.hip` (line 157)
+
+**Action**: Fix during Phase 5 profiling. Use `BLOCK_SIZE / 2` or `blockDim.x / 2` consistently.
+
+#### Test Results
+
+```bash
+$ cargo test --package rocmforge --lib mlp --features rocm
+
+running 11 tests
+test result: ok. 11 passed; 0 failed; 0 ignored
+```
+
+**Total**: 44/44 tests passing (11 MLP + 33 other)
+
+---
+
+## [Unreleased] - 2026-01-03
+
 ### Phase 3b: Causal Masking ✅ COMPLETE
 
 **Summary**: Added causal masking to FlashAttention, enabling autoregressive decoding.
