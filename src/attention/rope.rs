@@ -229,17 +229,96 @@ impl Rope {
         position_ids: &[usize],
         num_heads: usize,
     ) -> AttentionResult<()> {
-        // For now, fallback to CPU implementation
-        // TODO: Implement GPU kernel for RoPE
-        let mut x_host = x.to_host_vec().map_err(|e| {
-            AttentionError::DimensionError(format!("Failed to copy tensor to host: {}", e))
+        use crate::backend::hip_backend::HipBackend;
+        use crate::attention::kernels::rope_gpu_kernel;
+        use crate::loader::mmap_loader::TensorShape;
+
+        let head_dim = self.config.head_dim;
+        let seq_len = position_ids.len();
+
+        // Validate input shape
+        let expected_elements = seq_len * num_heads * head_dim;
+        if x.len() != expected_elements {
+            return Err(AttentionError::ShapeMismatch(format!(
+                "DeviceTensor size {} doesn't match expected shape [seq_len={}, num_heads={}, head_dim={}]",
+                x.len(), seq_len, num_heads, head_dim
+            )));
+        }
+
+        // Validate head_dim is even
+        if head_dim % 2 != 0 {
+            return Err(AttentionError::DimensionError(format!(
+                "Head dimension must be even for RoPE, got {}",
+                head_dim
+            )));
+        }
+
+        // Create backend for kernel execution
+        let backend = HipBackend::new().map_err(|e| {
+            AttentionError::DimensionError(format!("Failed to create HIP backend: {}", e))
         })?;
 
-        self.apply_rope(&mut x_host, position_ids, num_heads)?;
+        // Upload cos/sin to GPU for the positions we need
+        // cos/sin shape: [seq_len, head_dim/2]
+        let half_dim = head_dim / 2;
 
-        // Copy back to device
-        x.copy_from_host(&x_host).map_err(|e| {
-            AttentionError::DimensionError(format!("Failed to copy tensor back to device: {}", e))
+        // Check position bounds
+        for &pos in position_ids {
+            if pos >= self.config.max_seq_len {
+                return Err(AttentionError::DimensionError(format!(
+                    "Position ID {} exceeds maximum sequence length {}",
+                    pos, self.config.max_seq_len
+                )));
+            }
+        }
+
+        // Extract cos/sin for the positions we need
+        let mut cos_gpu = Vec::with_capacity(seq_len * half_dim);
+        let mut sin_gpu = Vec::with_capacity(seq_len * half_dim);
+        for &pos in position_ids {
+            let cos_offset = pos * half_dim;
+            let sin_offset = pos * half_dim;
+            cos_gpu.extend_from_slice(&self.cos[cos_offset..cos_offset + half_dim]);
+            sin_gpu.extend_from_slice(&self.sin[sin_offset..sin_offset + half_dim]);
+        }
+
+        // Create cos/sin device tensors
+        let cos_shape = TensorShape::from_dims(&[seq_len, half_dim]);
+        let cos_device = DeviceTensor::from_host_vec(&backend, cos_gpu, cos_shape).map_err(|e| {
+            AttentionError::DimensionError(format!("Failed to allocate cos tensor: {}", e))
+        })?;
+
+        let sin_shape = TensorShape::from_dims(&[seq_len, half_dim]);
+        let sin_device = DeviceTensor::from_host_vec(&backend, sin_gpu, sin_shape).map_err(|e| {
+            AttentionError::DimensionError(format!("Failed to allocate sin tensor: {}", e))
+        })?;
+
+        // Get device pointers
+        let input_ptr = x.buffer().as_mut_ptr() as *mut f32;
+        let cos_ptr = cos_device.as_ptr() as *const f32;
+        let sin_ptr = sin_device.as_ptr() as *const f32;
+
+        // Call GPU kernel
+        let result = unsafe {
+            rope_gpu_kernel(
+                input_ptr,
+                cos_ptr,
+                sin_ptr,
+                seq_len as u32,
+                num_heads as u32,
+                head_dim as u32,
+            )
+        };
+
+        if result != 0 {
+            return Err(AttentionError::DimensionError(
+                "GPU kernel execution failed".to_string()
+            ));
+        }
+
+        // Synchronize to ensure kernel completes
+        backend.synchronize().map_err(|e| {
+            AttentionError::DimensionError(format!("GPU synchronization failed: {}", e))
         })?;
 
         Ok(())

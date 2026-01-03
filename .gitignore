@@ -111,3 +111,28 @@ htmlcov/
 # Local environment
 .env
 .env.local
+
+# Development tools and databases
+.codemcp/
+.fastembed_cache/
+.odincode/
+.splice-backup/
+*.db
+*.db-shm
+*.db-wal
+codegraph.db
+syncore_code_graph.db
+semantic.db
+execution_log.db
+operations.db
+src/**/.splice_graph.db
+
+# Source archives
+src.zip
+*.zip
+
+# HSACO and compiled kernels (built from .hip sources in build.rs)
+*.hsaco
+*.hsaco
+*.hipfb
+target/debug/build/*/out/

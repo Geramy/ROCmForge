@@ -9,6 +9,7 @@ pub mod engine;
 pub mod http;
 pub mod kv_cache;
 pub mod loader;
+pub mod mlp;
 pub mod model;
 pub mod models;
 pub mod ops;

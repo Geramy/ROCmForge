@@ -203,43 +203,15 @@ impl HipAttentionKernels {
     #[cfg(feature = "rocm")]
     fn apply_causal_mask_gpu(
         &self,
-        attention: &mut DeviceTensor,
-        seq_len: usize,
-        cache_len: usize,
+        _attention: &mut DeviceTensor,
+        _seq_len: usize,
+        _cache_len: usize,
     ) -> HipResult<()> {
-        if seq_len == 0 || cache_len == 0 {
-            return Ok(());
-        }
-
-        let shape = attention.shape();
-        if shape.dims() != &[seq_len, cache_len] {
-            return Err(HipError::GenericError(format!(
-                "Attention tensor shape {:?} must be [{}, {}]",
-                shape.dims(),
-                seq_len,
-                cache_len
-            )));
-        }
-
-        let kernel = self.get_attention_mask_kernel()?;
-        let block_dim = 256u32;
-        let grid_y = (cache_len as u32 + block_dim - 1) / block_dim;
-        let mut rows_i32 = seq_len as i32;
-        let mut cols_i32 = cache_len as i32;
-        let mut scores_ptr = attention.buffer().as_ptr();
-        let mut args = [
-            &mut scores_ptr as *mut _ as *mut c_void,
-            &mut rows_i32 as *mut _ as *mut c_void,
-            &mut cols_i32 as *mut _ as *mut c_void,
-        ];
-
-        self.backend.launch_kernel_with_module_shared(
-            &kernel.kernel,
-            (seq_len as u32, grid_y.max(1), 1),
-            (block_dim, 1, 1),
-            &args,
-            0,
-        )
+        // TODO: Implement GPU causal mask kernel (Phase 2+)
+        // For now, return error to use CPU fallback
+        Err(HipError::GenericError(
+            "GPU causal mask not implemented, using CPU fallback".to_string()
+        ))
     }
 
     /// Compute softmax of attention scores

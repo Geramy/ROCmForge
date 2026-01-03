@@ -1278,48 +1278,84 @@ impl HipBackend {
         )
         .map_err(|e| HipError::GenericError(format!("Up projection failed: {}", e)))?;
 
-        // Step 3: Apply SwiGLU activation: gate_output ⊙ Swish(up_output)
-        // First compute Swish(up_output) = up_output ⊙ σ(up_output)
-        // We need a custom kernel for this, but for now implement on CPU as fallback
-        let mut gate_host = vec![0.0f32; (seq_len * intermediate_size) as usize];
-        let mut up_host = vec![0.0f32; (seq_len * intermediate_size) as usize];
+        // Step 3: Apply SwiGLU activation using GPU kernel
+        // SwiGLU = gate_output ⊙ Swish(up_output)
+        // where Swish(x) = x ⊙ σ(x)
+        #[cfg(feature = "rocm")]
+        {
+            // Allocate device buffer for SwiGLU output
+            let swiglu_buffer = HipBuffer::new((seq_len * intermediate_size) * std::mem::size_of::<f32>())?;
 
-        gate_buffer.copy_to_host(&mut gate_host)?;
-        up_buffer.copy_to_host(&mut up_host)?;
+            // Launch GPU kernel for SwiGLU activation
+            unsafe {
+                crate::mlp::kernels::swiglu_gpu_kernel(
+                    gate_buffer.as_ptr() as *const f32,
+                    up_buffer.as_ptr() as *const f32,
+                    swiglu_buffer.as_mut_ptr() as *mut f32,
+                    seq_len as u32,
+                    intermediate_size as u32,
+                ).map_err(|e| HipError::GenericError(format!("SwiGLU GPU kernel failed: {}", e)))?;
+            }
 
-        // Apply SwiGLU activation on CPU
-        let mut swiglu_host = vec![0.0f32; (seq_len * intermediate_size) as usize];
-        for i in 0..swiglu_host.len() {
-            let gate_val = gate_host[i];
-            let up_val = up_host[i];
-            // Swish activation: swish(x) = x * sigmoid(x)
-            let sigmoid_up = 1.0 / (1.0 + (-up_val).exp());
-            let swish_up = up_val * sigmoid_up;
-            // SwiGLU: gate(x) * swish(up(x))
-            swiglu_host[i] = gate_val * swish_up;
+            // Synchronize to ensure kernel completes before down projection
+            self.synchronize()?;
+
+            // Step 4: Compute down projection: swiglu_output @ down_weight -> final_output
+            let final_buffer = matmul_f32(
+                &blas_handle,
+                &swiglu_buffer,
+                down_weight.buffer(),
+                seq_len as i32,
+                hidden_size as i32,
+                intermediate_size as i32,
+            )
+            .map_err(|e| HipError::GenericError(format!("Down projection failed: {}", e)))?;
+
+            // Copy result to output tensor (GPU to GPU)
+            output.buffer().copy_from_buffer(&final_buffer)?;
         }
 
-        // Copy SwiGLU result back to GPU
-        let swiglu_buffer = HipBuffer::new(swiglu_host.len() * std::mem::size_of::<f32>())?;
-        swiglu_buffer.copy_from_host(&swiglu_host)?;
+        #[cfg(not(feature = "rocm"))]
+        {
+            // CPU fallback for non-ROCM builds
+            let mut gate_host = vec![0.0f32; (seq_len * intermediate_size) as usize];
+            let mut up_host = vec![0.0f32; (seq_len * intermediate_size) as usize];
 
-        // Step 4: Compute down projection: swiglu_output @ down_weight -> final_output
-        // swiglu_output: [seq_len, intermediate_size], down_weight: [intermediate_size, hidden_size]
-        // final_output: [seq_len, hidden_size]
-        let final_buffer = matmul_f32(
-            &blas_handle,
-            &swiglu_buffer,
-            down_weight.buffer(),
-            seq_len as i32,
-            hidden_size as i32,
-            intermediate_size as i32,
-        )
-        .map_err(|e| HipError::GenericError(format!("Down projection failed: {}", e)))?;
+            gate_buffer.copy_to_host(&mut gate_host)?;
+            up_buffer.copy_to_host(&mut up_host)?;
 
-        // Copy result to output tensor
-        let mut output_host = vec![0.0f32; (seq_len * hidden_size) as usize];
-        final_buffer.copy_to_host(&mut output_host)?;
-        output.buffer().copy_from_host(&output_host)?;
+            // Apply SwiGLU activation on CPU
+            let mut swiglu_host = vec![0.0f32; (seq_len * intermediate_size) as usize];
+            for i in 0..swiglu_host.len() {
+                let gate_val = gate_host[i];
+                let up_val = up_host[i];
+                // Swish activation: swish(x) = x * sigmoid(x)
+                let sigmoid_up = 1.0 / (1.0 + (-up_val).exp());
+                let swish_up = up_val * sigmoid_up;
+                // SwiGLU: gate(x) * swish(up(x))
+                swiglu_host[i] = gate_val * swish_up;
+            }
+
+            // Copy SwiGLU result back to GPU
+            let swiglu_buffer = HipBuffer::new(swiglu_host.len() * std::mem::size_of::<f32>())?;
+            swiglu_buffer.copy_from_host(&swiglu_host)?;
+
+            // Step 4: Compute down projection: swiglu_output @ down_weight -> final_output
+            let final_buffer = matmul_f32(
+                &blas_handle,
+                &swiglu_buffer,
+                down_weight.buffer(),
+                seq_len as i32,
+                hidden_size as i32,
+                intermediate_size as i32,
+            )
+            .map_err(|e| HipError::GenericError(format!("Down projection failed: {}", e)))?;
+
+            // Copy result to output tensor
+            let mut output_host = vec![0.0f32; (seq_len * hidden_size) as usize];
+            final_buffer.copy_to_host(&mut output_host)?;
+            output.buffer().copy_from_host(&output_host)?;
+        }
 
         Ok(())
     }

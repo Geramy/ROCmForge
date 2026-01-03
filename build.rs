@@ -1,38 +1,92 @@
 use std::env;
-use std::path::Path;
+use std::path::{Path, PathBuf};
+use std::process::Command;
 
 fn main() {
-    println!("cargo:rerun-if-changed=src/backend/hip_kernels/");
+    println!("cargo:rerun-if-changed=kernels");
 
     // Only link with ROCm HIP library if rocm feature is enabled
-    // Link against ROCm libraries unconditionally so GPU backend is usable by default
     let rocm_root = env::var("ROCM_PATH").unwrap_or_else(|_| "/opt/rocm".to_string());
     println!("cargo:rustc-link-search=native={}/lib", rocm_root);
     println!("cargo:rustc-link-lib=dylib=amdhip64");
     println!("cargo:rustc-link-lib=dylib=hipblas");
     println!("cargo:rustc-link-lib=dylib=hiprtc");
 
-    // For now, we'll skip HIP kernel compilation since hipcc is not available
-    // In a real deployment, this would compile the HIP kernels using hipcc
+    #[cfg(feature = "rocm")]
+    {
+        compile_hip_kernels();
+    }
+}
 
-    let out_dir = env::var("OUT_DIR").unwrap();
-    let hip_path = Path::new("src/backend/hip_kernels");
+#[cfg(feature = "rocm")]
+fn compile_hip_kernels() {
+    let hipcc = env::var("HIPCC").unwrap_or_else(|_| {
+        let rocm_root = env::var("ROCM_PATH").unwrap_or_else(|_| "/opt/rocm".to_string());
+        format!("{}/bin/hipcc", rocm_root)
+    });
 
-    // Create placeholder object files to satisfy the build system
-    let hip_files = ["layer_norm.hip", "rope.hip", "softmax.hip"];
+    let out_dir = PathBuf::from(env::var("OUT_DIR").unwrap());
+    let kernels_dir = Path::new("kernels");
 
-    for hip_file in &hip_files {
-        let hip_path = hip_path.join(hip_file);
-        let _obj_path = Path::new(&out_dir).join(format!("{}.o", hip_file));
+    // Verify hipcc exists
+    if !Path::new(&hipcc).exists() {
+        println!("cargo:warning=hipcc not found at {}. Skipping kernel compilation.", hipcc);
+        return;
+    }
 
-        // Skip actual compilation for now
-        // cc::Build::new()
-        //     .file(&hip_path)
-        //     .cpp(true)
-        //     .flag("-x")
-        //     .flag("hip")
-        //     .flag("-c")
-        //     .opt_level(3)
-        //     .compile(&format!("{}_kernel", hip_file));
+    // Target architecture for AMD Radeon RX 7900 XT (gfx1100, RDNA3)
+    let target_arch = env::var("ROCm_ARCH").unwrap_or_else(|_| "gfx1100".to_string());
+
+    // Kernels to compile: (source_file, env_var_name, kernel_name)
+    let kernels = [
+        ("kernels/scale.hip", "SCALE_HSACO", "scale_kernel"),
+        ("kernels/mask.hip", "MASK_HSACO", "mask_kernel"),
+        ("kernels/softmax.hip", "SOFTMAX_HSACO", "softmax_kernel"),
+        ("kernels/rope.hip", "ROPE_HSACO", "rope_kernel"),
+        ("kernels/qkt_matmul.hip", "QKT_MATMUL_HSACO", "qkt_matmul_kernel"),
+        ("kernels/weighted_matmul.hip", "WEIGHTED_MATMUL_HSACO", "weighted_matmul_kernel"),
+        ("kernels/flash_attention_nocausal.hip", "FLASH_ATTENTION_NCAUSAL_HSACO", "flash_attention_nocausal_kernel"),
+        ("kernels/causal_mask.hip", "CAUSAL_MASK_HSACO", "causal_mask_kernel"),
+        ("kernels/flash_attention_causal.hip", "FLASH_ATTENTION_CAUSAL_HSACO", "flash_attention_causal_kernel"),
+        ("kernels/flash_attention.hip", "FLASH_ATTENTION_HSACO", "flash_attention_kernel"),
+        ("kernels/swiglu.hip", "SWIGLU_HSACO", "swiglu_kernel"),
+        ("kernels/rms_norm.hip", "RMS_NORM_HSACO", "rms_norm_kernel"),
+    ];
+
+    for (src_file, env_name, kernel_name) in &kernels {
+        let src_path = PathBuf::from(src_file);
+
+        if !src_path.exists() {
+            println!("cargo:warning=Kernel source not found: {}", src_file);
+            continue;
+        }
+
+        let hsaco_path = out_dir.join(format!("{}.hsaco", kernel_name));
+
+        // Compile HIP kernel to HSACO
+        let status = Command::new(&hipcc)
+            .arg("-c")
+            .arg("--genco")
+            .arg(format!("--offload-arch={}", target_arch))
+            .arg("-O3")
+            .arg(src_file)
+            .arg("-o")
+            .arg(&hsaco_path)
+            .status();
+
+        match status {
+            Ok(status_code) if status_code.success() => {
+                println!("cargo:rustc-env={}={}", env_name, hsaco_path.display());
+                println!("cargo:rustc-env={}_PATH={}", env_name, hsaco_path.display());
+                println!("Compiled {} -> {}", src_file, hsaco_path.display());
+            }
+            Ok(status_code) => {
+                println!("cargo:warning=Failed to compile {}: exit code {:?}",
+                    src_file, status_code.code());
+            }
+            Err(e) => {
+                println!("cargo:warning=Failed to execute hipcc for {}: {:?}", src_file, e);
+            }
+        }
     }
 }

@@ -12,6 +12,51 @@ pub mod multi_query;
 pub mod rope;
 pub mod softmax;
 
+// Phase 1 kernel tests (CPU vs GPU comparison)
+#[cfg(test)]
+#[cfg(feature = "rocm")]
+mod kernel_tests;
+
+// Phase 2 RoPE GPU tests
+#[cfg(test)]
+#[cfg(feature = "rocm")]
+mod rope_gpu_tests;
+
+// Phase 3 FlashAttention tests
+#[cfg(test)]
+#[cfg(feature = "rocm")]
+mod flash_attention_tests;
+
+// Phase 3a.1 QK^T matmul tests (divide & conquer)
+#[cfg(test)]
+#[cfg(feature = "rocm")]
+mod qkt_matmul_tests;
+
+// Phase 3a.3.1 Softmax with explicit layout tests
+#[cfg(test)]
+#[cfg(feature = "rocm")]
+mod softmax_explicit_tests;
+
+// Phase 3a.4 Weighted × V matmul tests
+#[cfg(test)]
+#[cfg(feature = "rocm")]
+mod weighted_matmul_tests;
+
+// Phase 3a.5 Fused non-causal FlashAttention tests
+#[cfg(test)]
+#[cfg(feature = "rocm")]
+mod flash_nocausal_tests;
+
+// Phase 3b.1 Causal mask tests (standalone, before fusion)
+#[cfg(test)]
+#[cfg(feature = "rocm")]
+mod causal_mask_tests;
+
+// Phase 3b.2 Fused causal FlashAttention tests
+#[cfg(test)]
+#[cfg(feature = "rocm")]
+mod flash_causal_tests;
+
 #[cfg(feature = "rocm")]
 use crate::backend::{DeviceTensor, HipBackend};
 #[cfg(feature = "rocm")]
