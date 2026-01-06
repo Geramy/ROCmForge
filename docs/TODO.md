@@ -19,29 +19,39 @@
 
 ---
 
-## Architecture Decision: Standard GGUF Format Only
+## Architecture Decision: Ecosystem Compatibility
 
-### ❌ REJECTED: Runtime Tensor Name Mapping
+### ✅ ACCEPTED: Runtime Tensor Mapping (Industry Standard)
 
-**Decision**: ROCmForge will **NOT** implement per-model tensor name mapping at runtime.
+**Decision**: ROCmForge **WILL** implement runtime tensor name mapping.
 
-**Why**:
-- Non-standard - llama.cpp, vLLM, Ollama don't do this
-- Unsustainable - every new model needs custom code
-- Wrong approach - models should be CONVERTED to standard format
+**Why** (UPDATED 2026-01-06):
+- **Industry standard**: vLLM, llama.cpp, and Ollama ALL use this approach
+- **Ecosystem requirement**: Necessary to run the same models as these engines
+- **Proven pattern**: Architecture detection + tensor mappers is the established method
 
-**Correct Approach**:
-1. Use llama.cpp's `convert.py` to create standard GGUF files
-2. Use AMD Quark to quantize to MXFP formats
-3. ROCmForge enforces standard tensor naming
-4. Fail with clear error message for non-standard models
+**Implementation**:
+```rust
+pub trait TensorMapper: Send + Sync {
+    fn detect_architecture(&self, config: &ModelConfig) -> Option<Architecture>;
+    fn map_tensor_name(&self, name: &str, arch: Architecture) -> String;
+}
+
+// Auto-detect from config.json or GGUF metadata
+// Built-in mappers for 50+ architectures
+```
+
+**Benefits**:
+- Run ANY model that vLLM/llama.cpp/Ollama can run
+- No special conversion required
+- Drop-in compatibility
 
 ### ✅ ACCEPTED: AMD Quark for Quantization
 
 **Decision**: Use AMD's official Quark toolkit for all quantization.
 
 **Why**:
-- AMD's official solution (not reinventing the wheel)
+- AMD's official solution
 - Follows OCP Microscaling Formats (MX) Specification v1.0
 - Supports MXFP4, MXFP6, FP8, and traditional quantization
 - Integrates with vLLM AMD
@@ -49,11 +59,10 @@
 
 ---
 
-## Phase 5: AMD MXFP Quantization
+## Phase 5: Ecosystem Compatibility (Updated)
 
-> **Goal**: Enable state-of-the-art quantization for AMD GPUs
-> **Hardware Target**: AMD Instinct MI355 (CDNA4) with native MXFP support
-> **Fallback**: Software simulation for MI300/MI250/RDNA3
+> **Goal**: Full compatibility with vLLM, llama.cpp, Ollama model ecosystem
+> **Hardware Target**: AMD Radeon RX 7900 XT → AMD Instinct MI355 (CDNA4)
 
 ### MXFP4/MXFP6 Overview
 
