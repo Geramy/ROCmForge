@@ -612,6 +612,8 @@ impl GgufLoader {
                   actual_pool_size / 1024 / 1024, max_tensor_size / 1024 / 1024);
 
         // Create memory pools (account for 4KB alignment padding)
+        // NOTE: RAII ensures cleanup - HipBuffer uses Arc<HipBufferInner> with proper Drop impl
+        // If any allocation fails, the pools Vec is dropped and all GPU memory is freed
         const ALIGNMENT: usize = 4096;
         let mut pools: Vec<HipBuffer> = Vec::new();
         let mut current_pool_bytes = 0usize;
@@ -700,6 +702,13 @@ impl GgufLoader {
             // Check if we need to move to next pool
             if offset + tensor_bytes > pools[pool_idx].size() {
                 pool_idx += 1;
+                // CRITICAL: Bounds check before accessing pools array
+                if pool_idx >= pools.len() {
+                    return Err(anyhow!(
+                        "Tensor '{}' ({} bytes) exceeds all available pool capacity ({} pools × {} bytes each)",
+                        name, tensor_bytes, pools.len(), pools[0].size()
+                    ));
+                }
                 offset = 0;
             }
 

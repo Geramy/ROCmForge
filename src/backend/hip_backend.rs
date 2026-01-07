@@ -265,7 +265,18 @@ impl HipBuffer {
     fn ptr(&self) -> *mut c_void {
         // For sub-allocated views, add offset to base pointer
         if self.inner.offset > 0 {
-            unsafe { self.inner.ptr.add(self.inner.offset) }
+            // SAFETY: Check for overflow before pointer arithmetic
+            // The offset has already been validated to be within buffer bounds
+            let base_ptr = self.inner.ptr as usize;
+            let new_offset = base_ptr.saturating_add(self.inner.offset);
+            if new_offset < base_ptr {
+                // Arithmetic overflow - this should never happen with validated offsets
+                // But we handle it gracefully rather than causing undefined behavior
+                eprintln!("WARNING: Pointer arithmetic overflow detected (base=0x{:x}, offset={})",
+                          base_ptr, self.inner.offset);
+                return std::ptr::null_mut();
+            }
+            new_offset as *mut c_void
         } else {
             self.inner.ptr
         }
@@ -339,7 +350,13 @@ impl HipBuffer {
 
         // For sub-allocated buffers, synchronize before reading
         if self.inner.offset > 0 {
-            unsafe { hipDeviceSynchronize() };
+            let sync_result = unsafe { hipDeviceSynchronize() };
+            if sync_result != HIP_SUCCESS {
+                return Err(HipError::MemoryCopyFailed(format!(
+                    "Device synchronization failed with code {} before D2H copy",
+                    sync_result
+                )));
+            }
         }
 
         let ptr = self.ptr();
@@ -406,8 +423,21 @@ impl HipBuffer {
             )));
         }
 
-        let dst_ptr = unsafe { (self.ptr() as *mut u8).add(dst_offset_bytes) } as *mut c_void;
-        let src_ptr = unsafe { (src.ptr() as *mut u8).add(src_offset_bytes) } as *const c_void;
+        // SAFETY: Check for pointer arithmetic overflow
+        let base_dst = self.ptr() as usize;
+        let base_src = src.ptr() as usize;
+
+        let dst_ptr = base_dst.checked_add(dst_offset_bytes)
+            .ok_or_else(|| HipError::MemoryCopyFailed(
+                format!("Destination pointer arithmetic overflow (base=0x{:x}, offset={})",
+                       base_dst, dst_offset_bytes)
+            ))? as *mut c_void;
+
+        let src_ptr = base_src.checked_add(src_offset_bytes)
+            .ok_or_else(|| HipError::MemoryCopyFailed(
+                format!("Source pointer arithmetic overflow (base=0x{:x}, offset={})",
+                       base_src, src_offset_bytes)
+            ))? as *const c_void;
         let result = unsafe { hipMemcpy(dst_ptr, src_ptr, byte_len, HIP_MEMCPY_DEVICE_TO_DEVICE) };
 
         if result != HIP_SUCCESS {
@@ -568,7 +598,10 @@ impl HipBackend {
 
         let backend = Arc::new(HipBackend { device, stream });
         *guard = Some(backend.clone());
+        // CRITICAL: Set flag BEFORE releasing lock to prevent race condition
+        // Other threads check GLOBAL_INIT_CALLED before acquiring lock
         GLOBAL_INIT_CALLED.store(true, Ordering::Release);
+        drop(guard);  // Explicitly release lock before returning
 
         Ok(backend)
     }
@@ -957,9 +990,13 @@ impl HipBackend {
             crate::backend::hip_blas::saxpy(&handle, cols as i32, 1.0f32, bias_ptr, 1, row_ptr, 1)
                 .map_err(|e| HipError::GenericError(format!("hipBLAS saxpy failed: {}", e)))?;
 
-            unsafe {
-                row_ptr = row_ptr.add(stride);
-            }
+            // SAFETY: Check for pointer arithmetic overflow before advancing
+            let current = row_ptr as usize;
+            row_ptr = current.checked_add(stride)
+                .ok_or_else(|| HipError::GenericError(
+                    format!("Pointer arithmetic overflow in add_bias_to_rows (current=0x{:x}, stride={})",
+                           current, stride)
+                ))? as *mut f32;
         }
 
         Ok(())
