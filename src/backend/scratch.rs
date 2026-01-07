@@ -1,7 +1,7 @@
 //! Scratch buffer manager for reusable GPU memory allocation
 //! Provides preallocated buffers for attention, MLP, and layernorm operations
 
-use crate::backend::{DeviceTensor, HipBackend, HipError, HipResult};
+use crate::backend::{DeviceTensor, HipBackend, HipError};
 use thiserror::Error;
 
 #[derive(Error, Debug)]
@@ -33,12 +33,12 @@ impl ScratchBufferManager {
         backend: &HipBackend,
         num_heads: usize,
         hidden_size: usize,
-        head_dim: usize,
+        _head_dim: usize,
         max_seq_len: usize,
     ) -> ScratchResult<Self> {
         // Calculate buffer sizes
-        let attention_scores_size = num_heads * max_seq_len * max_seq_len;
-        let softmax_temp_size = num_heads * max_seq_len;
+        let _attention_scores_size = num_heads * max_seq_len * max_seq_len;
+        let _softmax_temp_size = num_heads * max_seq_len;
         let mlp_intermediate_size = hidden_size * 4; // SwiGLU intermediate
         let layernorm_temp_size = hidden_size;
 
@@ -116,7 +116,7 @@ impl ScratchBufferManager {
         &self,
         num_heads: usize,
         hidden_size: usize,
-        head_dim: usize,
+        _head_dim: usize,
         max_seq_len: usize,
     ) -> ScratchResult<()> {
         let expected_attention_size = num_heads * max_seq_len * max_seq_len;

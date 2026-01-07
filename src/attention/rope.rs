@@ -5,7 +5,7 @@
 
 use crate::attention::{AttentionError, AttentionResult};
 #[cfg(feature = "rocm")]
-use crate::backend::{DeviceTensor, HipBackend};
+use crate::backend::DeviceTensor;
 
 /// RoPE configuration
 #[derive(Debug, Clone)]
@@ -246,7 +246,7 @@ impl Rope {
         }
 
         // Validate head_dim is even
-        if head_dim % 2 != 0 {
+        if !head_dim.is_multiple_of(2) {
             return Err(AttentionError::DimensionError(format!(
                 "Head dimension must be even for RoPE, got {}",
                 head_dim
@@ -360,16 +360,20 @@ mod tests {
 
         // Create test tensor: [batch=1, seq_len=2, num_heads=1, head_dim=4]
         let mut x = vec![
-            1.0, 2.0, 3.0, 4.0, // position 0
-            5.0, 6.0, 7.0, 8.0, // position 1
+            1.0, 2.0, 3.0, 4.0, // position 0 (identity - no change)
+            5.0, 6.0, 7.0, 8.0, // position 1 (should rotate)
         ];
         let position_ids = vec![0, 1];
 
         rope.apply_q(&mut x, &position_ids, 1).unwrap();
 
-        // Values should be different after RoPE application
-        assert_ne!(x[0], 1.0); // First element should change
-        assert_ne!(x[1], 2.0); // Second element should change
+        // Position 0 is identity (cos=1, sin=0), so values don't change
+        assert_eq!(x[0], 1.0); // Position 0: no rotation
+        assert_eq!(x[1], 2.0); // Position 0: no rotation
+
+        // Position 1 should have rotation applied
+        assert_ne!(x[4], 5.0); // Position 1: rotated
+        assert_ne!(x[5], 6.0); // Position 1: rotated
     }
 
     #[test]

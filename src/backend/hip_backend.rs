@@ -8,6 +8,7 @@ use thiserror::Error;
 
 // HIP FFI bindings
 #[link(name = "amdhip64")]
+#[allow(dead_code)]
 extern "C" {
     fn hipInit(flags: u32) -> i32;
     pub fn hipGetDeviceCount(count: *mut i32) -> i32;
@@ -42,13 +43,14 @@ extern "C" {
     fn hipGetErrorString(error: i32) -> *const i8;
     fn hipDeviceSynchronize() -> i32;
     fn hipMemGetInfo(free: *mut usize, total: *mut usize) -> i32;
+    fn hipMemset(dst: *mut c_void, value: i32, count: usize) -> i32;
 }
 
 // HIP constants
-const hipMemcpyHostToDevice: i32 = 1;
-const hipMemcpyDeviceToHost: i32 = 2;
-const hipMemcpyDeviceToDevice: i32 = 3;
-const hipSuccess: i32 = 0;
+const HIP_MEMCPY_HOST_TO_DEVICE: i32 = 1;
+const HIP_MEMCPY_DEVICE_TO_HOST: i32 = 2;
+const HIP_MEMCPY_DEVICE_TO_DEVICE: i32 = 3;
+const HIP_SUCCESS: i32 = 0;
 
 // Opaque buffer for hipDeviceProp_t - MUST be exactly 1472 bytes to match C's sizeof(hipDeviceProp_t)
 // CRITICAL: If C writes it, Rust must allocate exactly the same bytes.
@@ -167,7 +169,7 @@ impl HipStream {
         let result = unsafe { hipStreamCreate(&mut stream) };
         eprintln!("DEBUG: HipStream::new: hipStreamCreate returned result={}, stream={:?}", result, stream);
 
-        if result != hipSuccess {
+        if result != HIP_SUCCESS {
             return Err(HipError::DeviceError(format!(
                 "Failed to create HIP stream: {}",
                 result
@@ -186,7 +188,7 @@ impl HipStream {
 
     pub fn synchronize(&self) -> HipResult<()> {
         let result = unsafe { hipStreamSynchronize(self.stream) };
-        if result != hipSuccess {
+        if result != HIP_SUCCESS {
             Err(HipError::DeviceError(format!(
                 "Stream synchronization failed: {}",
                 result
@@ -213,11 +215,18 @@ impl Drop for HipStream {
 unsafe impl Send for HipBuffer {}
 unsafe impl Sync for HipBuffer {}
 
-#[repr(C)]
+// HipBuffer wrapper using Arc for safe, cheap cloning
+// Arc ensures single ownership of GPU memory - Drop called once when refcount=0
 #[derive(Debug, Clone)]
 pub struct HipBuffer {
+    inner: Arc<HipBufferInner>,
+}
+
+#[repr(C)]
+#[derive(Debug)]
+struct HipBufferInner {
     ptr: *mut c_void,
-    pub size: usize,
+    size: usize,
 }
 
 impl HipBuffer {
@@ -227,7 +236,7 @@ impl HipBuffer {
         // Use hipMalloc to allocate device memory
         let result = unsafe { hipMalloc(&mut ptr, size) };
 
-        if result != hipSuccess {
+        if result != HIP_SUCCESS {
             return Err(HipError::MemoryAllocationFailed(format!(
                 "hipMalloc failed with code {} for {} bytes",
                 result, size
@@ -241,29 +250,39 @@ impl HipBuffer {
             )));
         }
 
-        Ok(HipBuffer { ptr, size })
+        Ok(HipBuffer {
+            inner: Arc::new(HipBufferInner { ptr, size }),
+        })
+    }
+
+    pub fn size(&self) -> usize {
+        self.inner.size
+    }
+
+    fn ptr(&self) -> *mut c_void {
+        self.inner.ptr
     }
 
     pub fn copy_from_host<T>(&self, data: &[T]) -> HipResult<()> {
         let byte_size = std::mem::size_of_val(data);
-        if byte_size > self.size {
+        if byte_size > self.size() {
             return Err(HipError::MemoryAllocationFailed(format!(
                 "Source data too large: {} > {}",
-                byte_size, self.size
+                byte_size, self.size()
             )));
         }
 
         // Use hipMemcpyHtoD to copy from host to device
         let result = unsafe {
             hipMemcpy(
-                self.ptr,
+                self.ptr(),
                 data.as_ptr() as *const c_void,
                 byte_size,
-                hipMemcpyHostToDevice,
+                HIP_MEMCPY_HOST_TO_DEVICE,
             )
         };
 
-        if result != hipSuccess {
+        if result != HIP_SUCCESS {
             return Err(HipError::MemoryCopyFailed(format!(
                 "hipMemcpyHtoD failed with code {}",
                 result
@@ -275,10 +294,10 @@ impl HipBuffer {
 
     pub fn copy_to_host<T>(&self, data: &mut [T]) -> HipResult<()> {
         let byte_size = std::mem::size_of_val(data);
-        if byte_size > self.size {
+        if byte_size > self.size() {
             return Err(HipError::MemoryAllocationFailed(format!(
                 "Destination buffer too small: {} > {}",
-                byte_size, self.size
+                byte_size, self.size()
             )));
         }
 
@@ -286,13 +305,13 @@ impl HipBuffer {
         let result = unsafe {
             hipMemcpy(
                 data.as_mut_ptr() as *mut c_void,
-                self.ptr,
+                self.ptr(),
                 byte_size,
-                hipMemcpyDeviceToHost,
+                HIP_MEMCPY_DEVICE_TO_HOST,
             )
         };
 
-        if result != hipSuccess {
+        if result != HIP_SUCCESS {
             return Err(HipError::MemoryCopyFailed(format!(
                 "hipMemcpyDtoH failed with code {}",
                 result
@@ -303,16 +322,16 @@ impl HipBuffer {
     }
 
     pub fn copy_from_buffer(&self, src: &HipBuffer) -> HipResult<()> {
-        if src.size != self.size {
+        if src.size() != self.size() {
             return Err(HipError::MemoryCopyFailed(format!(
                 "Buffer size mismatch: src={} bytes, dst={} bytes",
-                src.size, self.size
+                src.size(), self.size()
             )));
         }
 
-        let result = unsafe { hipMemcpy(self.ptr, src.ptr, self.size, hipMemcpyDeviceToDevice) };
+        let result = unsafe { hipMemcpy(self.ptr(), src.ptr(), self.size(), HIP_MEMCPY_DEVICE_TO_DEVICE) };
 
-        if result != hipSuccess {
+        if result != HIP_SUCCESS {
             return Err(HipError::MemoryCopyFailed(format!(
                 "hipMemcpyDtoD failed with code {}",
                 result
@@ -329,24 +348,24 @@ impl HipBuffer {
         src_offset_bytes: usize,
         byte_len: usize,
     ) -> HipResult<()> {
-        if src_offset_bytes + byte_len > src.size {
+        if src_offset_bytes + byte_len > src.size() {
             return Err(HipError::MemoryCopyFailed(format!(
                 "Source range out of bounds: offset={} len={} src_size={}",
-                src_offset_bytes, byte_len, src.size
+                src_offset_bytes, byte_len, src.size()
             )));
         }
-        if dst_offset_bytes + byte_len > self.size {
+        if dst_offset_bytes + byte_len > self.size() {
             return Err(HipError::MemoryCopyFailed(format!(
                 "Destination range out of bounds: offset={} len={} dst_size={}",
-                dst_offset_bytes, byte_len, self.size
+                dst_offset_bytes, byte_len, self.size()
             )));
         }
 
-        let dst_ptr = unsafe { (self.ptr as *mut u8).add(dst_offset_bytes) } as *mut c_void;
-        let src_ptr = unsafe { (src.ptr as *mut u8).add(src_offset_bytes) } as *const c_void;
-        let result = unsafe { hipMemcpy(dst_ptr, src_ptr, byte_len, hipMemcpyDeviceToDevice) };
+        let dst_ptr = unsafe { (self.ptr() as *mut u8).add(dst_offset_bytes) } as *mut c_void;
+        let src_ptr = unsafe { (src.ptr() as *mut u8).add(src_offset_bytes) } as *const c_void;
+        let result = unsafe { hipMemcpy(dst_ptr, src_ptr, byte_len, HIP_MEMCPY_DEVICE_TO_DEVICE) };
 
-        if result != hipSuccess {
+        if result != HIP_SUCCESS {
             return Err(HipError::MemoryCopyFailed(format!(
                 "hipMemcpyDtoD (region) failed with code {}",
                 result
@@ -357,15 +376,11 @@ impl HipBuffer {
     }
 
     pub fn as_ptr(&self) -> *mut c_void {
-        self.ptr
+        self.ptr()
     }
 
     pub fn as_mut_ptr(&self) -> *mut c_void {
-        self.ptr
-    }
-
-    pub fn size(&self) -> usize {
-        self.size
+        self.ptr()
     }
 
     pub fn copy_from_buffer_with_offset(
@@ -378,7 +393,7 @@ impl HipBuffer {
     }
 }
 
-impl Drop for HipBuffer {
+impl Drop for HipBufferInner {
     fn drop(&mut self) {
         if !self.ptr.is_null() {
             // Use hipFree to free device memory
@@ -517,7 +532,7 @@ impl HipBackend {
         let mut count: i32 = 0;
         let result = unsafe { hipGetDeviceCount(&mut count) };
 
-        if result != hipSuccess {
+        if result != HIP_SUCCESS {
             return Err(HipError::DeviceNotFound);
         }
 
@@ -533,7 +548,7 @@ impl HipBackend {
             let mut props = HipDeviceProp::default();
             let result = unsafe { hipGetDeviceProperties(&mut props, device_id) };
 
-            if result == hipSuccess {
+            if result == HIP_SUCCESS {
                 println!(
                     "Device {}: {} - {}MB VRAM",
                     device_id,
@@ -553,7 +568,7 @@ impl HipBackend {
         let mut props = HipDeviceProp::default();
         let result = unsafe { hipGetDeviceProperties(&mut props, best_device) };
 
-        if result != hipSuccess {
+        if result != HIP_SUCCESS {
             return Err(HipError::DeviceError(format!(
                 "Failed to get device properties: {}",
                 result
@@ -571,7 +586,7 @@ impl HipBackend {
     fn initialize_hip() -> HipResult<()> {
         let result = unsafe { hipInit(0) };
 
-        if result != hipSuccess {
+        if result != HIP_SUCCESS {
             return Err(HipError::InitializationFailed(format!(
                 "hipInit failed with code {}",
                 result
@@ -596,7 +611,7 @@ impl HipBackend {
 
         let result = unsafe { hipMemGetInfo(&mut free, &mut total) };
 
-        if result != hipSuccess {
+        if result != HIP_SUCCESS {
             return Err(HipError::MemoryQueryFailed(format!(
                 "hipMemGetInfo failed with code {}",
                 result
@@ -613,17 +628,19 @@ impl HipBackend {
 
         // Use hipMalloc to allocate device memory
         let result = unsafe { hipMalloc(&mut ptr, size) };
-        if result != hipSuccess {
+        if result != HIP_SUCCESS {
             return Err(HipError::DeviceError(format!(
                 "Failed to allocate device memory: {}",
                 result
             )));
         }
 
-        let buffer = HipBuffer { ptr, size };
+        let buffer = HipBuffer {
+            inner: Arc::new(HipBufferInner { ptr, size }),
+        };
         println!(
             "DEBUG: allocate_buffer: created buffer with size {} bytes",
-            buffer.size
+            buffer.size()
         );
         Ok(buffer)
     }
@@ -660,7 +677,7 @@ impl HipBackend {
         let mut module: *mut c_void = ptr::null_mut();
         let result = unsafe { hipModuleLoad(&mut module, path_cstr.as_ptr()) };
 
-        if result != hipSuccess {
+        if result != HIP_SUCCESS {
             let error_msg = unsafe {
                 let error_ptr = hipGetErrorString(result);
                 if error_ptr.is_null() {
@@ -684,7 +701,7 @@ impl HipBackend {
         let mut module: *mut c_void = ptr::null_mut();
         let result = unsafe { hipModuleLoadData(&mut module, data.as_ptr() as *const c_void) };
 
-        if result != hipSuccess {
+        if result != HIP_SUCCESS {
             let error_msg = unsafe {
                 let error_ptr = hipGetErrorString(result);
                 if error_ptr.is_null() {
@@ -725,7 +742,7 @@ impl HipBackend {
         let result =
             unsafe { hipModuleGetFunction(&mut func, module.as_ptr(), kernel_name_cstr.as_ptr()) };
 
-        if result != hipSuccess {
+        if result != HIP_SUCCESS {
             let error_msg = unsafe {
                 let error_ptr = hipGetErrorString(result);
                 if error_ptr.is_null() {
@@ -750,7 +767,7 @@ impl HipBackend {
         let mut count: i32 = 0;
         let result = unsafe { hipGetDeviceCount(&mut count) };
 
-        if result != hipSuccess {
+        if result != HIP_SUCCESS {
             let error_msg = unsafe {
                 let error_ptr = hipGetErrorString(result);
                 if error_ptr.is_null() {
@@ -775,7 +792,7 @@ impl HipBackend {
         let mut props = HipDeviceProp::default();
         let result = unsafe { hipGetDeviceProperties(&mut props, device_id) };
 
-        if result != hipSuccess {
+        if result != HIP_SUCCESS {
             let error_msg = unsafe {
                 let error_ptr = hipGetErrorString(result);
                 if error_ptr.is_null() {
@@ -937,7 +954,7 @@ impl HipBackend {
             )
         };
 
-        if result != hipSuccess {
+        if result != HIP_SUCCESS {
             let error_msg = unsafe {
                 let error_ptr = hipGetErrorString(result);
                 if error_ptr.is_null() {
@@ -1029,7 +1046,7 @@ impl DeviceTensor {
 
     /// Get size in bytes
     pub fn size(&self) -> usize {
-        self.buffer.size
+        self.buffer.size()
     }
 
     /// Get number of elements
@@ -1055,10 +1072,37 @@ impl DeviceTensor {
         Ok(host_data)
     }
 
-    /// Create empty device tensor (uninitialized)
+    /// Create empty device tensor (zero-initialized)
+    ///
+    /// CRITICAL: GPU memory MUST be zero-initialized to prevent test isolation failures.
+    /// Uninitialized GPU memory contains garbage from previous kernel executions,
+    /// causing tests to pass individually but fail when run together.
     pub fn empty(backend: &HipBackend, shape: TensorShape) -> HipResult<Self> {
         let total_bytes = shape.total_elements() * std::mem::size_of::<f32>();
         let buffer = backend.allocate_buffer(total_bytes)?;
+
+        // Zero-initialize GPU memory to prevent test isolation failures
+        // This ensures clean state for each test, preventing garbage data
+        // from previous kernel executions from contaminating new tests.
+        let result = unsafe { hipMemset(buffer.as_ptr(), 0, total_bytes) };
+
+        if result != HIP_SUCCESS {
+            let error_msg = unsafe {
+                let error_ptr = hipGetErrorString(result);
+                if error_ptr.is_null() {
+                    "Unknown error".to_string()
+                } else {
+                    std::ffi::CStr::from_ptr(error_ptr)
+                        .to_string_lossy()
+                        .into_owned()
+                }
+            };
+            return Err(HipError::MemoryAllocationFailed(format!(
+                "hipMemset failed (zero-initialization): {}",
+                error_msg
+            )));
+        }
+
         Ok(DeviceTensor { buffer, shape })
     }
 
@@ -1159,7 +1203,7 @@ impl HipBackend {
         down_weight: &DeviceTensor,
         output: &mut DeviceTensor,
     ) -> HipResult<()> {
-        use crate::backend::hip_blas::{sgemm, HipBlasHandle, HIPBLAS_OP_N, HIPBLAS_OP_T};
+        use crate::backend::hip_blas::HipBlasHandle;
         use crate::tensor::matmul::matmul_f32;
 
         // Phase D: TDD implementation - validate shapes and basic structure
@@ -1354,7 +1398,7 @@ impl HipBackend {
 
         // weight should match last dimension of input
         let last_dim = *input_shape.dims().last().unwrap();
-        if weight_shape.dims() != &[last_dim] {
+        if weight_shape.dims() != [last_dim] {
             return Err(HipError::GenericError(
                 "weight must match last dimension of input".to_string(),
             ));
@@ -1380,7 +1424,7 @@ impl HipBackend {
         // Phase D: Implement actual LayerNorm computation
         // LayerNorm(x) = (x - mean) / sqrt(var + eps) * weight + bias
         let total_elements = input_shape.total_elements();
-        let last_dim_size = last_dim as usize;
+        let last_dim_size = last_dim;
         let num_rows = total_elements / last_dim_size;
 
         // Copy input to host for computation (GPU kernel would be more efficient)
@@ -1433,13 +1477,13 @@ impl HipBackend {
     /// Complete transformer layer forward pass
     pub fn transformer_layer(
         &self,
-        layer_idx: usize,
+        _layer_idx: usize,
         hidden_states: &DeviceTensor,
         layer_plan: &crate::model::execution_plan::LayerPlan,
         attention_output: &mut DeviceTensor,
         mlp_output: &mut DeviceTensor,
-        scratch_buffers: &crate::backend::scratch::ScratchBufferManager,
-        kv_cache: &mut crate::model::kv_cache::KVCache,
+        _scratch_buffers: &crate::backend::scratch::ScratchBufferManager,
+        _kv_cache: &mut crate::model::kv_cache::KVCache,
     ) -> HipResult<()> {
         // Phase D: TDD implementation - validate parameters
         let hidden_shape = hidden_states.shape();
@@ -1892,7 +1936,7 @@ impl ModelRuntime {
 pub fn synchronize_device() -> HipResult<()> {
     let result = unsafe { hipDeviceSynchronize() };
 
-    if result != hipSuccess {
+    if result != HIP_SUCCESS {
         let error_msg = unsafe {
             let error_ptr = hipGetErrorString(result);
             if error_ptr.is_null() {
@@ -1937,8 +1981,14 @@ mod tests {
         let host_data = [1.0f32, 2.0, 3.0, 4.0];
         assert!(buffer.copy_from_host(&host_data).is_ok());
 
+        // Synchronize to ensure copy completes
+        let _ = synchronize_device();
+
         let mut host_result = [0.0f32; 4];
         assert!(buffer.copy_to_host(&mut host_result).is_ok());
+
+        // Synchronize after copy_to_host to ensure data is fully transferred
+        let _ = synchronize_device();
 
         assert_eq!(host_data, host_result);
     }

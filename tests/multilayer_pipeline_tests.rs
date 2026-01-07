@@ -79,19 +79,8 @@ fn test_execution_plan_creation() -> Result<(), HipError> {
     Ok(())
 }
 
-/// Test model runtime creation
-#[test]
-fn test_model_runtime_creation() -> Result<(), HipError> {
-    let backend = HipBackend::new()?;
-    let config = ModelConfig::llama2_7b();
-
-    let model_runtime = backend.create_model_runtime(&config)?;
-
-    // Verify model runtime was created
-    assert!(true); // Basic assertion that we got here
-
-    Ok(())
-}
+// REMOVED: Duplicate test_model_runtime_creation
+// This test is already in model_runtime_tests.rs:14
 
 /// Test scratch buffer creation
 #[test]

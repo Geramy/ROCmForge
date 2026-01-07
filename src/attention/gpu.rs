@@ -1,7 +1,7 @@
 //! GPU backend implementation for attention computation using ROCm/HIP
 
 #[cfg(feature = "rocm")]
-use crate::attention::{compute, mask, softmax, AttentionError, AttentionResult};
+use crate::attention::{compute, AttentionError, AttentionResult};
 #[cfg(feature = "rocm")]
 use crate::backend::{DeviceTensor, HipBackend, HipBlasHandle, HipBuffer};
 #[cfg(feature = "rocm")]
@@ -52,13 +52,13 @@ impl GpuBackend {
         })?;
 
         // Allocate GPU buffers
-        let q_gpu = HipBuffer::new(q.len() * std::mem::size_of::<f32>()).map_err(|e| {
+        let q_gpu = HipBuffer::new(std::mem::size_of_val(q)).map_err(|e| {
             AttentionError::DimensionError(format!("Failed to allocate Q buffer: {}", e))
         })?;
-        let k_gpu = HipBuffer::new(k.len() * std::mem::size_of::<f32>()).map_err(|e| {
+        let k_gpu = HipBuffer::new(std::mem::size_of_val(k)).map_err(|e| {
             AttentionError::DimensionError(format!("Failed to allocate K buffer: {}", e))
         })?;
-        let v_gpu = HipBuffer::new(v.len() * std::mem::size_of::<f32>()).map_err(|e| {
+        let v_gpu = HipBuffer::new(std::mem::size_of_val(v)).map_err(|e| {
             AttentionError::DimensionError(format!("Failed to allocate V buffer: {}", e))
         })?;
 
@@ -170,7 +170,7 @@ impl GpuBackend {
                             e
                         ))
                     })?;
-                let mask_gpu = HipBuffer::new(mask_data.len() * std::mem::size_of::<f32>())
+                let mask_gpu = HipBuffer::new(std::mem::size_of_val(mask_data))
                     .map_err(|e| {
                         AttentionError::DimensionError(format!(
                             "Failed to allocate mask buffer: {}",
@@ -368,7 +368,7 @@ impl GpuBackend {
             &q_host,
             &k_host,
             &v_host,
-            mask_host.as_ref().map(|m| m.as_slice()),
+            mask_host.as_deref(),
             dropout,
         )?;
 

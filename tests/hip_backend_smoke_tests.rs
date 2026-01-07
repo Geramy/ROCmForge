@@ -130,15 +130,15 @@ mod tests {
 
         // Test small buffer
         let small_buffer = backend.alloc_gpu_buffer::<f32>(1)?;
-        assert_eq!(small_buffer.size, std::mem::size_of::<f32>());
+        assert_eq!(small_buffer.size(), std::mem::size_of::<f32>());
 
         // Test medium buffer
         let medium_buffer = backend.alloc_gpu_buffer::<f32>(1024)?;
-        assert_eq!(medium_buffer.size, 1024 * std::mem::size_of::<f32>());
+        assert_eq!(medium_buffer.size(), 1024 * std::mem::size_of::<f32>());
 
         // Test large buffer (within reasonable limits)
         let large_buffer = backend.alloc_gpu_buffer::<f32>(65536)?;
-        assert_eq!(large_buffer.size, 65536 * std::mem::size_of::<f32>());
+        assert_eq!(large_buffer.size(), 65536 * std::mem::size_of::<f32>());
 
         Ok(())
     }

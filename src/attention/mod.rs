@@ -59,8 +59,6 @@ mod flash_causal_tests;
 
 #[cfg(feature = "rocm")]
 use crate::backend::{DeviceTensor, HipBackend};
-#[cfg(feature = "rocm")]
-use crate::loader::mmap_loader::TensorShape;
 pub use backend::AttentionBackend;
 use thiserror::Error;
 
@@ -160,7 +158,7 @@ impl Attention {
                     &q_host,
                     &k_host,
                     &v_host,
-                    mask_host.as_ref().map(|m| m.as_slice()),
+                    mask_host.as_deref(),
                     dropout,
                 )?;
                 println!(

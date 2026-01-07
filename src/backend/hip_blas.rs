@@ -1,6 +1,8 @@
 //! hipBLAS bindings for ROCmForge
 //! Provides safe Rust wrappers around hipBLAS library for GPU matrix operations
 
+#![allow(non_snake_case)] // BLAS convention uses uppercase for matrix names
+
 use std::ffi::c_void;
 use std::ptr;
 use thiserror::Error;

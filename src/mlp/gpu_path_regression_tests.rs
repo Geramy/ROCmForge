@@ -45,47 +45,50 @@ mod gpu_path_regression_tests {
     fn test_mlp_swiglu_gpu_only_path() {
         let backend = HipBackend::new().expect("Failed to create HipBackend");
 
-        // Small test data: seq_len=4, intermediate_size=8
+        // Small test data: seq_len=4, hidden_size=8, intermediate_size=16
         let seq_len = 4;
-        let intermediate_size = 8;
-        let total = seq_len * intermediate_size;
+        let hidden_size = 8;
+        let intermediate_size = 16;
 
-        // Create input tensors on GPU
-        let gate_data: Vec<f32> = (0..total).map(|i| i as f32 * 0.1).collect();
-        let up_data: Vec<f32> = (0..total).map(|i| i as f32 * 0.1 - 0.5).collect();
+        // Create input tensors on GPU with correct shapes:
+        // hidden_states: [seq_len, hidden_size] = [4, 8]
+        // gate_weight: [hidden_size, intermediate_size] = [8, 16]
+        // up_weight: [hidden_size, intermediate_size] = [8, 16]
+        // down_weight: [intermediate_size, hidden_size] = [16, 8]
+        // output: [seq_len, hidden_size] = [4, 8]
 
-        let shape = TensorShape::from_dims(&[seq_len, intermediate_size]);
+        let hidden_data: Vec<f32> = (0..seq_len * hidden_size).map(|i| i as f32 * 0.1).collect();
+        let gate_data: Vec<f32> = (0..hidden_size * intermediate_size).map(|i| i as f32 * 0.1).collect();
+        let up_data: Vec<f32> = (0..hidden_size * intermediate_size).map(|i| i as f32 * 0.1 - 0.5).collect();
+        let down_data: Vec<f32> = (0..intermediate_size * hidden_size).map(|i| i as f32 * 0.1 - 0.3).collect();
 
-        let gate_gpu = DeviceTensor::from_host_vec(&backend, gate_data.clone(), shape.clone())
+        let hidden_shape = TensorShape::from_dims(&[seq_len, hidden_size]);
+        let weight_shape = TensorShape::from_dims(&[hidden_size, intermediate_size]);
+        let down_shape = TensorShape::from_dims(&[intermediate_size, hidden_size]);
+
+        let hidden_gpu = DeviceTensor::from_host_vec(&backend, hidden_data, hidden_shape.clone())
+            .expect("Failed to create hidden tensor");
+        let gate_gpu = DeviceTensor::from_host_vec(&backend, gate_data, weight_shape.clone())
             .expect("Failed to create gate tensor");
-        let up_gpu = DeviceTensor::from_host_vec(&backend, up_data.clone(), shape.clone())
+        let up_gpu = DeviceTensor::from_host_vec(&backend, up_data, weight_shape.clone())
             .expect("Failed to create up tensor");
+        let down_gpu = DeviceTensor::from_host_vec(&backend, down_data, down_shape)
+            .expect("Failed to create down tensor");
 
-        // Allocate output tensor on GPU
-        let output_gpu = DeviceTensor::empty(&backend, shape)
-            .expect("Failed to create output tensor");
+        let mut result_gpu = DeviceTensor::empty(&backend, hidden_shape)
+            .expect("Failed to create result tensor");
 
-        // Call mlp_swiglu (this should stay on GPU)
-        // Note: This test verifies the function exists and compiles.
-        // The actual verification that no to_host_vec is called is done by:
-        // 1. Code review (grep for to_host_vec in hip_backend.rs mlp_swiglu)
-        // 2. Performance: GPU-only path is ~100x faster than CPU fallback
+        backend.mlp_swiglu(&hidden_gpu, &gate_gpu, &up_gpu, &down_gpu, &mut result_gpu)
+            .expect("MLP SwiGLU failed");
 
-        // For now, we verify the kernel wrapper is accessible
-        #[cfg(feature = "rocm")]
-        {
-            let gate_ptr = gate_gpu.buffer().as_ptr();
-            let up_ptr = up_gpu.buffer().as_ptr();
-            let output_ptr = output_gpu.buffer().as_mut_ptr();
+        // Verify output is valid (non-zero, since inputs are non-zero)
+        let result = result_gpu.to_host_vec().expect("Failed to copy result to host");
 
-            // Verify pointers are valid device pointers (non-null)
-            assert!(!gate_ptr.is_null(), "Gate GPU pointer is null");
-            assert!(!up_ptr.is_null(), "Up GPU pointer is null");
-            assert!(!output_ptr.is_null(), "Output GPU pointer is null");
-        }
-
-        // TODO: Add actual mlp_swiglu call once the API is exposed
-        // let result = backend.mlp_swiglu(&gate_gpu, &up_gpu)?;
+        // Result should be non-zero since we used non-zero inputs
+        assert!(
+            result.iter().any(|&x| x != 0.0),
+            "MLP SwiGLU produced all zeros - check kernel implementation"
+        );
     }
 
     /// Test that GPU-to-GPU copy works correctly.

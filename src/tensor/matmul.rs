@@ -196,8 +196,9 @@ pub fn matmul_f32(
 
 /// Transpose a matrix in-place on GPU
 /// Converts from column-major to row-major or vice versa
+#[allow(dead_code)]
 fn transpose_in_place_gpu(
-    handle: &HipBlasHandle,
+    _handle: &HipBlasHandle,
     matrix: &HipBuffer,
     rows: i32,
     cols: i32,

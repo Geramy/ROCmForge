@@ -7,6 +7,10 @@ pub mod glm_position;
 pub mod kv_cache;
 pub mod simple_transformer;
 
+// Include position embedding tests
+#[cfg(test)]
+pub mod position_embedding_tests;
+
 pub use config::*;
 pub use execution_plan::*;
 pub use glm_position::*;

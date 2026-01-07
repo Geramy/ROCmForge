@@ -48,7 +48,7 @@ impl OnnxTensor {
         let data_bytes = unsafe {
             std::slice::from_raw_parts(
                 data.as_ptr() as *const u8,
-                data.len() * std::mem::size_of::<T>(),
+                std::mem::size_of_val(data),
             )
             .to_vec()
         };
@@ -134,6 +134,12 @@ impl OnnxSession {
 #[derive(Debug)]
 pub struct OnnxLoader {
     session: Option<OnnxSession>,
+}
+
+impl Default for OnnxLoader {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl OnnxLoader {

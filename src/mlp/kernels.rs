@@ -60,7 +60,7 @@
 
 use std::ffi::c_void;
 use std::path::Path;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 use crate::backend::hip_backend::{HipBackend, HipError, HipKernel, HipModule};
 
@@ -71,7 +71,7 @@ const WARP_SIZE: u32 = 32;     // RDNA3 wavefront size
 /// Cached kernel modules and functions for MLP operations
 #[derive(Debug)]
 struct KernelCache {
-    backend: HipBackend,
+    backend: Arc<HipBackend>,
     swiglu_module: Option<HipModule>,
     swiglu_kernel: Option<HipKernel>,
     rms_norm_module: Option<HipModule>,
@@ -172,7 +172,7 @@ pub unsafe fn swiglu_gpu_kernel(
             let backend = &cache_ref.backend;
 
             let total_elements = seq_len * intermediate_size;
-            let grid_dim = ((total_elements + BLOCK_SIZE - 1) / BLOCK_SIZE, 1, 1);
+            let grid_dim = (total_elements.div_ceil(BLOCK_SIZE), 1, 1);
             let block_dim = (BLOCK_SIZE, 1, 1);
             let shared_mem_bytes = 0u32;
 
@@ -195,7 +195,7 @@ pub unsafe fn swiglu_gpu_kernel(
                 kernel,
                 grid_dim,
                 block_dim,
-                &args,
+                args,
                 shared_mem_bytes,
             ).map_err(|e| format!("Failed to launch swiglu kernel: {:?}", e))?;
 
@@ -264,7 +264,7 @@ pub unsafe fn rms_norm_gpu_kernel(
                 kernel,
                 grid_dim,
                 block_dim,
-                &args,
+                args,
                 shared_mem_bytes,
             ).map_err(|e| format!("Failed to launch rms_norm kernel: {:?}", e))?;
 

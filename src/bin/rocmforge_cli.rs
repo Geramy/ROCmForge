@@ -1,7 +1,7 @@
 use clap::{Parser, Subcommand};
 use futures::StreamExt;
 use reqwest::Client;
-use reqwest_eventsource::{Event, EventSource, RequestBuilderExt};
+use reqwest_eventsource::{Event, EventSource};
 use rocmforge::engine::{EngineConfig, InferenceEngine};
 use rocmforge::http::server::run_server;
 use rocmforge::models::discover_models;

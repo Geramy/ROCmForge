@@ -3,6 +3,8 @@
 //! This module provides Rust wrappers for HIP kernels that implement
 //! core attention operations on GPU.
 
+#![allow(non_snake_case)] // Kernel parameter names follow HIP conventions
+
 use std::ffi::c_void;
 use std::path::Path;
 use std::sync::{Arc, Mutex};
@@ -25,6 +27,8 @@ struct KernelCache {
     softmax_kernel: Option<HipKernel>,
     rope_module: Option<HipModule>,
     rope_kernel: Option<HipKernel>,
+    position_embeddings_module: Option<HipModule>,
+    position_embeddings_kernel: Option<HipKernel>,
     qkt_matmul_module: Option<HipModule>,
     qkt_matmul_kernel: Option<HipKernel>,
     weighted_matmul_module: Option<HipModule>,
@@ -110,6 +114,18 @@ fn get_or_init_cache() -> Result<&'static Mutex<Option<KernelCache>>, HipError> 
     let rope_module = backend.load_module(&rope_path)?;
     let rope_kernel = backend.get_kernel_function(&rope_module, "rope_kernel")?;
 
+    // Load position embeddings kernel
+    let position_embeddings_path = std::env::var("POSITION_EMBEDDINGS_HSACO")
+        .ok()
+        .ok_or_else(|| HipError::KernelLoadFailed("POSITION_EMBEDDINGS_HSACO env var not set".to_string()))?;
+
+    if !Path::new(&position_embeddings_path).exists() {
+        return Err(HipError::KernelLoadFailed(format!("HSACO not found: {}", position_embeddings_path)));
+    }
+
+    let position_embeddings_module = backend.load_module(&position_embeddings_path)?;
+    let position_embeddings_kernel = backend.get_kernel_function(&position_embeddings_module, "position_embeddings_kernel")?;
+
     // Load QK^T matmul kernel
     let qkt_matmul_path = std::env::var("QKT_MATMUL_HSACO")
         .ok()
@@ -192,6 +208,8 @@ fn get_or_init_cache() -> Result<&'static Mutex<Option<KernelCache>>, HipError> 
         softmax_kernel: Some(softmax_kernel),
         rope_module: Some(rope_module),
         rope_kernel: Some(rope_kernel),
+        position_embeddings_module: Some(position_embeddings_module),
+        position_embeddings_kernel: Some(position_embeddings_kernel),
         qkt_matmul_module: Some(qkt_matmul_module),
         qkt_matmul_kernel: Some(qkt_matmul_kernel),
         weighted_matmul_module: Some(weighted_matmul_module),
@@ -234,7 +252,7 @@ pub unsafe fn scale_gpu_kernel(
 
             // Calculate grid dimensions
             let total_elements = batch_size * seq_len * seq_len;
-            let grid_dim = ((total_elements + BLOCK_SIZE - 1) / BLOCK_SIZE, 1, 1);
+            let grid_dim = (total_elements.div_ceil(BLOCK_SIZE), 1, 1);
             let block_dim = (BLOCK_SIZE, 1, 1);
 
             // Prepare kernel arguments
@@ -283,7 +301,7 @@ pub unsafe fn mask_gpu_kernel(
 
             // Calculate grid dimensions
             let total_elements = batch_size * seq_len * seq_len;
-            let grid_dim = ((total_elements + BLOCK_SIZE - 1) / BLOCK_SIZE, 1, 1);
+            let grid_dim = (total_elements.div_ceil(BLOCK_SIZE), 1, 1);
             let block_dim = (BLOCK_SIZE, 1, 1);
 
             // Prepare kernel arguments
@@ -869,3 +887,69 @@ pub unsafe fn flash_attention_gpu_kernel(
         Err(_) => -1,
     }
 }
+
+
+
+/// GPU kernel for applying position embeddings (RoPE) to Q and K tensors
+///
+/// This kernel applies rotary position embeddings to both query and key tensors
+/// in a single kernel launch, avoiding multiple kernel invocations.
+///
+/// # Safety
+/// This function is unsafe because it calls HIP kernels directly.
+/// The caller must ensure that:
+/// - q, k, cos, and sin point to valid GPU memory
+/// - The dimensions are correct
+/// - head_dim must be even
+/// - No other threads are accessing the same memory concurrently
+#[cfg(feature = "rocm")]
+pub unsafe fn position_embeddings_gpu_kernel(
+    q: *mut f32,
+    k: *mut f32,
+    cos: *const f32,
+    sin: *const f32,
+    seq_len: u32,
+    num_heads: u32,
+    head_dim: u32,
+) -> i32 {
+    match get_or_init_cache() {
+        Ok(cache_ref) => {
+            let cache = cache_ref.lock().unwrap();
+            let cache_ref = cache.as_ref().unwrap();
+
+            let kernel = cache_ref.position_embeddings_kernel.as_ref().unwrap();
+            let backend = &cache_ref.backend;
+
+            // Grid: (seq_len, num_heads, 1) - one block per token per head
+            // Block: (BLOCK_SIZE, 1, 1) - handles head_dim/2 pairs per block
+            let grid_dim = (seq_len, num_heads, 1);
+            let block_dim = (BLOCK_SIZE, 1, 1);
+
+            // Prepare kernel arguments
+            let mut q_arg = q;
+            let mut k_arg = k;
+            let mut cos_arg = cos as *mut f32;
+            let mut sin_arg = sin as *mut f32;
+            let mut seq_len_arg = seq_len;
+            let mut num_heads_arg = num_heads;
+            let mut head_dim_arg = head_dim;
+
+            let args: &[*mut c_void] = &[
+                &mut q_arg as *mut _ as *mut c_void,
+                &mut k_arg as *mut _ as *mut c_void,
+                &mut cos_arg as *mut _ as *mut c_void,
+                &mut sin_arg as *mut _ as *mut c_void,
+                &mut seq_len_arg as *mut _ as *mut c_void,
+                &mut num_heads_arg as *mut _ as *mut c_void,
+                &mut head_dim_arg as *mut _ as *mut c_void,
+            ];
+
+            match backend.launch_kernel_with_module_shared(kernel, grid_dim, block_dim, args, 0) {
+                Ok(()) => 0,
+                Err(_) => -1,
+            }
+        }
+        Err(_) => -1,
+    }
+}
+

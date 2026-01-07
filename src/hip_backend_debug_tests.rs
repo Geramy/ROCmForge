@@ -26,15 +26,8 @@ mod hip_backend_debug_tests {
 
         // Step 3: Read the properties safely
         let props = unsafe { props.assume_init() };
-        // Convert i8 array to u8 for UTF-8 conversion
-        let name_bytes: &[u8] = unsafe {
-            std::slice::from_raw_parts(props.name.as_ptr() as *const u8, props.name.len())
-        };
-        println!(
-            "Device name: {}",
-            std::str::from_utf8(name_bytes).unwrap_or("Invalid UTF-8")
-        );
-        println!("Total memory: {} bytes", props.totalGlobalMem);
-        println!("Compute units: {}", props.multiProcessorCount);
+        println!("Device name: {}", props.name());
+        println!("Total memory: {} bytes", props.total_global_mem());
+        println!("Compute units: {}", props.multi_processor_count());
     }
 }

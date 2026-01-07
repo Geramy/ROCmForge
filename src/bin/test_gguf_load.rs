@@ -46,6 +46,9 @@ fn print_model_summary(loader: &GgufLoader) {
             GgufTensorType::Q4_1 => "Q4_1",
             GgufTensorType::Q5_0 => "Q5_0",
             GgufTensorType::Q5_1 => "Q5_1",
+            GgufTensorType::Mxfp4 => "MXFP4",
+            GgufTensorType::Mxfp6E2m3 => "MXFP6_E2M3",
+            GgufTensorType::Mxfp6E3m2 => "MXFP6_E3M2",
         };
         *type_counts.entry(type_name).or_insert(0) += 1;
     }

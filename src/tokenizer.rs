@@ -10,6 +10,7 @@ use tokenizers::Tokenizer;
 use tracing::warn;
 
 #[derive(Clone)]
+#[derive(Default)]
 pub struct TokenizerAdapter {
     inner: Option<Arc<Tokenizer>>,
 }
@@ -17,11 +18,6 @@ pub struct TokenizerAdapter {
 static TOKENIZER_CACHE_HITS: AtomicU64 = AtomicU64::new(0);
 static TOKENIZER_CACHE_MISSES: AtomicU64 = AtomicU64::new(0);
 
-impl Default for TokenizerAdapter {
-    fn default() -> Self {
-        Self { inner: None }
-    }
-}
 
 impl TokenizerAdapter {
     /// Create adapter from optional tokenizer JSON path.

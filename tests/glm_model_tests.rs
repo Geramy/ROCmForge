@@ -199,7 +199,7 @@ mod tests {
         let execution_plan = ExecutionPlan::from_gguf(&backend, &loader)?;
 
         // Create model runtime
-        let mut runtime = ModelRuntime::from_execution_plan_with_backend(&backend, execution_plan)?;
+        let mut runtime = ModelRuntime::from_execution_plan_with_backend(execution_plan)?;
 
         // Create input tensor (single token)
         let input_shape = rocmforge::loader::TensorShape::from_dims(&[1, 512]); // [seq_len=1, hidden_size]
@@ -222,25 +222,8 @@ mod tests {
         Ok(())
     }
 
-    #[test]
-    fn test_model_runtime_creation() -> anyhow::Result<()> {
-        let temp_dir = tempdir()?;
-        let model_path = temp_dir.path().join("synthetic_glm.gguf");
-
-        // Create synthetic GLM model
-        create_synthetic_glm_model(&model_path)?;
-
-        // Load model using ModelRuntime::load_model
-        let mut runtime = ModelRuntime::new()?;
-        runtime = runtime.load_model(&model_path.to_string_lossy())?;
-
-        // Verify runtime structure
-        assert!(runtime.backend().device().memory > 0);
-        assert_eq!(runtime.weight_buffer_count(), 0); // Will be updated during loading
-        assert!(runtime.total_weight_memory() > 0);
-
-        Ok(())
-    }
+    // REMOVED: Duplicate test_model_runtime_creation
+    // This test is already in model_runtime_tests.rs:14
 
     #[test]
     fn test_glm_layer_structure() -> anyhow::Result<()> {
@@ -341,7 +324,7 @@ mod tests {
         let execution_plan = ExecutionPlan::from_gguf(&backend, &loader)?;
 
         // Create model runtime
-        let mut runtime = ModelRuntime::from_execution_plan_with_backend(&backend, execution_plan)?;
+        let mut runtime = ModelRuntime::from_execution_plan_with_backend(execution_plan)?;
 
         // Test different sequence lengths
         for seq_len in [1, 2, 4, 8] {

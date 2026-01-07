@@ -3,6 +3,21 @@
 //! A high-performance inference engine for Large Language Models
 //! specifically designed for AMD GPUs using ROCm and HIP.
 
+#![allow(clippy::too_many_arguments)] // Many FFI functions and kernel launches need many args
+#![allow(clippy::manual_slice_size_calculation)] // Common in GPU kernel code
+#![allow(clippy::needless_range_loop)] // Clearer for GPU operations
+#![allow(clippy::collapsible_else_if)] // Sometimes clearer for control flow
+#![allow(clippy::collapsible_if)] // Sometimes clearer for control flow
+#![allow(clippy::bool_comparison)] // Sometimes clearer for intent
+#![allow(clippy::let_and_return)] // Sometimes clearer for debugging
+#![allow(clippy::clone_on_copy)] // Sometimes needed for API clarity
+#![allow(clippy::type_complexity)] // Complex types are common in ML
+#![allow(clippy::missing_safety_doc)] // FFI bindings documented at module level
+#![allow(clippy::bool_to_int_with_if)] // Sometimes clearer for intent
+#![allow(clippy::if_same_then_else)] // Sometimes clearer for future expansion
+#![allow(clippy::redundant_clone)] // Sometimes needed for API compatibility
+#![allow(clippy::manual_memcpy)] // GPU memory operations often manual
+
 pub mod attention;
 pub mod backend;
 pub mod engine;

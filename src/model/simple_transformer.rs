@@ -1,7 +1,6 @@
 //! Simple transformer model implementation
 //! Minimal transformer blocks for end-to-end testing
 
-use crate::attention::AttentionBackend;
 use crate::tensor::matmul::cpu_matmul_f32;
 use crate::tensor::Tensor;
 use rand::{Rng, SeedableRng};
@@ -72,8 +71,8 @@ impl Linear {
 
     #[cfg(feature = "rocm")]
     fn with_gpu_buffer(mut self) -> Self {
-        use crate::backend::{HipBackend, HipBuffer};
-        use crate::tensor::matmul::MatmulError;
+        use crate::backend::HipBackend;
+        
 
         // Initialize HIP backend and get memory info
         let backend = match HipBackend::new() {
@@ -86,7 +85,7 @@ impl Linear {
 
         // Allocate GPU buffer for weights with memory limit checking
         let weight_buffer = match backend.allocate_buffer(self.weight.data.len()) {
-            Ok(mut buffer) => {
+            Ok(buffer) => {
                 if let Err(e) = buffer.copy_from_host(&self.weight.data) {
                     eprintln!("Warning: Failed to copy weights to GPU: {}", e);
                     None
@@ -118,9 +117,9 @@ impl Linear {
 
         #[cfg(feature = "rocm")]
         if let Some(ref weight_buffer) = self.gpu_buffer {
-            return self.forward_gpu(input, weight_buffer);
+            self.forward_gpu(input, weight_buffer)
         } else {
-            return self.forward_cpu(input);
+            self.forward_cpu(input)
         }
 
         #[cfg(not(feature = "rocm"))]
@@ -325,7 +324,7 @@ impl SimpleAttention {
 
     #[cfg(feature = "rocm")]
     fn forward_gpu(&self, input: &[f32]) -> ModelResult<Vec<f32>> {
-        use crate::attention::AttentionBackend;
+        
 
         // Debug logging for GPU usage (gated by debug assertions)
         #[cfg(debug_assertions)]

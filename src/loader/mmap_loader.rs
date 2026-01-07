@@ -74,7 +74,7 @@ impl MmapWeights {
         }
 
         // Validate alignment - f32 requires 4-byte alignment
-        if start_byte % 4 != 0 {
+        if !start_byte.is_multiple_of(4) {
             return &[];
         }
 
@@ -94,7 +94,7 @@ pub fn open_mmap_weights<P: AsRef<Path>>(path: P) -> MmapResult<MmapWeights> {
     let file = File::open(path.as_ref()).map_err(MmapError::FileOpenError)?;
 
     // Get file size
-    let file_size = file.metadata().map_err(MmapError::FileOpenError)?.len() as usize;
+    let _file_size = file.metadata().map_err(MmapError::FileOpenError)?.len() as usize;
 
     // Use memmap2 crate for memory mapping
     use memmap2::Mmap;

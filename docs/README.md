@@ -221,6 +221,25 @@ src/
 
 ## Status
 
+**Test Health**: 100% (190/190 unit tests passing, 343/343 integration tests compiling)
+
+**Latest Updates**:
+- ✅ **Phase 9.5 Complete**: Fixed 8 critical bugs (3 numerical precision, 5 memory safety)
+- ✅ **Phase 9 Complete**: Code Quality - 100% test health achieved
+- ✅ **Phase 8 Complete**: Model Support - Q4_1/Q5_0/Q5_1 dequantization
+
+**Recent Bug Fixes** (2026-01-07):
+1. KVCache memory leak - GPU memory now properly freed
+2. HipBuffer double-free vulnerability - Arc-based shared ownership
+3. FFI null pointer checks - Added kernel validation
+4. FlashAttention numerical precision - Kahan summation
+5. FlashAttn numerical stability - Clamping and safety checks
+6. Weighted MatMul GPU - Fixed tensor indexing
+7. MQA tensor size mismatch - Test data correction
+8. RoPE test assertions - Position fix
+
+See `docs/BUG_FIX_CHRONICLE.md` for complete details on all bug fixes.
+
 | Phase | Kernel | Status | Documented In |
 |-------|--------|--------|---------------|
 | 1 | scale_kernel | ⚪ Not started | roadmap.md Task 1.1 |

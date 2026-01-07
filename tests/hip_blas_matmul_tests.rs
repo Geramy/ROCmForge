@@ -5,6 +5,48 @@ use rocmforge::backend::hip_backend::HipBuffer;
 use rocmforge::backend::hip_blas::HipBlasHandle;
 use rocmforge::tensor::matmul::{cpu_matmul_f32, matmul_f32};
 
+/// Validate matrix multiplication dimensions
+///
+/// Returns Ok(()) if dimensions are valid for matmul C = A @ B
+/// where A is (m, k) and B is (k, n), producing C (m, n)
+fn validate_matmul_dims(
+    m: i32,
+    k: i32,
+    n: i32,
+    a_size: usize,
+    b_size: usize,
+    c_size: usize,
+) -> Result<(), String> {
+    // Check A dimensions
+    let expected_a_size = (m * k) as usize;
+    if a_size != expected_a_size {
+        return Err(format!(
+            "Matrix A size mismatch: expected {} elements (m={} * k={}), got {}",
+            expected_a_size, m, k, a_size
+        ));
+    }
+
+    // Check B dimensions
+    let expected_b_size = (k * n) as usize;
+    if b_size != expected_b_size {
+        return Err(format!(
+            "Matrix B size mismatch: expected {} elements (k={} * n={}), got {}",
+            expected_b_size, k, n, b_size
+        ));
+    }
+
+    // Check C dimensions
+    let expected_c_size = (m * n) as usize;
+    if c_size != expected_c_size {
+        return Err(format!(
+            "Matrix C size mismatch: expected {} elements (m={} * n={}), got {}",
+            expected_c_size, m, n, c_size
+        ));
+    }
+
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -37,8 +79,14 @@ mod tests {
         gpu_a.copy_from_host(&a).unwrap();
         gpu_b.copy_from_host(&b).unwrap();
 
+        // Validate dimensions before matmul
+        let m = 1;
+        let k = 1;
+        let n = 1;
+        validate_matmul_dims(m, k, n, a.len(), b.len(), 1).expect("Dimension validation failed");
+
         // Simple 1x1 * 1x1 = 1x1 matrix multiplication
-        let result = matmul_f32(&handle, &gpu_a, &gpu_b, 1, 1, 1);
+        let result = matmul_f32(&handle, &gpu_a, &gpu_b, m, k, n);
 
         assert!(result.is_ok(), "Simple 1x1 matmul should succeed");
 
@@ -64,11 +112,15 @@ mod tests {
         let a = vec![1.0, 2.0, 3.0, 4.0]; // 2x2 row-major: [[1,2],[3,4]]
         let b = vec![5.0, 6.0, 7.0, 8.0]; // 2x2 row-major: [[5,6],[7,8]]
 
+        // Validate dimensions
+        validate_matmul_dims(m, k, n, a.len(), b.len(), (m * n) as usize)
+            .expect("Dimension validation failed");
+
         // Expected result: [[19,22],[43,50]]
         let expected = vec![19.0, 22.0, 43.0, 50.0];
 
         // Compute CPU reference
-        let cpu_result = cpu_matmul_f32(&a, &b, m, n, k);
+        let cpu_result = cpu_matmul_f32(&a, &b, m as usize, n as usize, k as usize);
 
         // Verify CPU computation
         assert_eq!(cpu_result.len(), expected.len());
@@ -135,7 +187,7 @@ mod tests {
         ];
 
         // Compute CPU reference
-        let cpu_result = cpu_matmul_f32(&a, &b, m, n, k);
+        let cpu_result = cpu_matmul_f32(&a, &b, m as usize, n as usize, k as usize);
 
         // Verify dimensions
         assert_eq!(cpu_result.len(), (m * n) as usize);
@@ -183,12 +235,27 @@ mod tests {
         let gpu_a = HipBuffer::new((m * k) as usize * std::mem::size_of::<f32>()).unwrap();
         let gpu_b = HipBuffer::new((k_prime * n) as usize * std::mem::size_of::<f32>()).unwrap();
 
+        // Validate dimensions - should detect mismatch
+        let validation_result = validate_matmul_dims(
+            m as i32,
+            k as i32,
+            n as i32,
+            (m * k) as usize,
+            (k_prime * n) as usize,
+            (m * n) as usize,
+        );
+
+        assert!(
+            validation_result.is_err(),
+            "Dimension validation should detect k dimension mismatch: k={} vs k'={}",
+            k,
+            k_prime
+        );
+
         // This should fail due to dimension mismatch
-        // For now, we'll test that our function handles it gracefully
         let result = matmul_f32(&handle, &gpu_a, &gpu_b, m as i32, n as i32, k as i32);
 
-        // TODO: Implement proper dimension checking and error handling
-        // For now, just ensure no panic
+        // Expect error due to dimension mismatch
         match result {
             Ok(_) => panic!("Expected dimension mismatch error"),
             Err(_) => (), // Expected

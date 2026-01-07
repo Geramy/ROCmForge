@@ -37,6 +37,8 @@ pub struct HipAttentionKernels {
     v_kernel: Option<crate::backend::hip_backend::HipModule>,
     #[cfg(feature = "rocm")]
     attention_softmax_kernel: OnceCell<CompiledKernel>,
+    #[cfg(feature = "rocm")]
+    causal_mask_kernel: OnceCell<CompiledKernel>,
 }
 
 #[cfg(feature = "rocm")]
@@ -63,6 +65,8 @@ impl HipAttentionKernels {
             v_kernel: None,
             #[cfg(feature = "rocm")]
             attention_softmax_kernel: OnceCell::new(),
+            #[cfg(feature = "rocm")]
+            causal_mask_kernel: OnceCell::new(),
         })
     }
 
@@ -80,6 +84,22 @@ impl HipAttentionKernels {
     fn get_attention_softmax_kernel(&self) -> HipResult<&CompiledKernel> {
         self.attention_softmax_kernel
             .get_or_try_init(|| self.compile_attention_softmax_kernel())
+    }
+
+    #[cfg(feature = "rocm")]
+    fn compile_causal_mask_kernel(&self) -> HipResult<CompiledKernel> {
+        let code = hiprtc::compile_kernel("causal_mask", CAUSAL_MASK_KERNEL)?;
+        let module = self.backend.load_module_from_data(&code)?;
+        let kernel = self
+            .backend
+            .get_kernel_function(&module, "causal_mask_kernel")?;
+        Ok(CompiledKernel { module, kernel })
+    }
+
+    #[cfg(feature = "rocm")]
+    fn get_causal_mask_kernel(&self) -> HipResult<&CompiledKernel> {
+        self.causal_mask_kernel
+            .get_or_try_init(|| self.compile_causal_mask_kernel())
     }
 
     /// Compute QK^T using HIP kernel
@@ -102,9 +122,9 @@ impl HipAttentionKernels {
             ));
         }
 
-        let (seq_q, num_heads_q, head_dim_q) =
+        let (_seq_q, num_heads_q, head_dim_q) =
             (q_shape.dims()[0], q_shape.dims()[1], q_shape.dims()[2]);
-        let (seq_k, num_heads_k, head_dim_k) =
+        let (_seq_k, num_heads_k, head_dim_k) =
             (k_shape.dims()[0], k_shape.dims()[1], k_shape.dims()[2]);
 
         if num_heads_q != num_heads_k || head_dim_q != head_dim_k {
@@ -149,7 +169,7 @@ impl HipAttentionKernels {
         }
 
         let total_dim = num_heads * head_dim;
-        if output.shape().dims() != &[seq_q, seq_k] {
+        if output.shape().dims() != [seq_q, seq_k] {
             return Err(HipError::GenericError(format!(
                 "Output shape mismatch: expected [{}, {}], got {:?}",
                 seq_q,
@@ -203,15 +223,79 @@ impl HipAttentionKernels {
     #[cfg(feature = "rocm")]
     fn apply_causal_mask_gpu(
         &self,
-        _attention: &mut DeviceTensor,
-        _seq_len: usize,
-        _cache_len: usize,
+        attention: &mut DeviceTensor,
+        seq_len: usize,
+        cache_len: usize,
     ) -> HipResult<()> {
-        // TODO: Implement GPU causal mask kernel (Phase 2+)
-        // For now, return error to use CPU fallback
-        Err(HipError::GenericError(
-            "GPU causal mask not implemented, using CPU fallback".to_string()
-        ))
+        let attention_shape = attention.shape();
+        let dims = attention_shape.dims();
+
+        // For causal mask with KV cache, we typically have:
+        // - seq_len: current query length
+        // - cache_len: total key length in cache (>= seq_len)
+        // The attention tensor is [seq_len, cache_len]
+
+        if dims.len() == 2 {
+            // Simple 2D case: [seq_len, cache_len]
+            let kernel = self.get_causal_mask_kernel()?;
+
+            let grid_dim = (seq_len as u32, 1, 1);
+            let block_dim = 32; // WARP_SIZE
+
+            let _seq_len_i32 = seq_len as i32;
+            let mut cache_len_i32 = cache_len as i32;
+            let mut attention_ptr = attention.buffer().as_ptr();
+
+            let args = [
+                &mut attention_ptr as *mut _ as *mut c_void,
+                &mut 1i32 as *mut _ as *mut c_void, // batch_size = 1
+                &mut cache_len_i32 as *mut _ as *mut c_void,
+                &mut 1i32 as *mut _ as *mut c_void, // num_heads = 1
+            ];
+
+            self.backend.launch_kernel_with_module_shared(
+                &kernel.kernel,
+                grid_dim,
+                (block_dim, 1, 1),
+                &args,
+                0, // shared memory
+            )
+        } else if dims.len() == 4 {
+            // 4D case: [batch_size, num_heads, seq_len, cache_len]
+            let batch_size = dims[0];
+            let num_heads = dims[1];
+
+            let kernel = self.get_causal_mask_kernel()?;
+
+            let grid_dim = (seq_len as u32, num_heads as u32, batch_size as u32);
+            let block_dim = 32; // WARP_SIZE
+
+            let mut batch_size_i32 = batch_size as i32;
+            let _seq_len_i32 = seq_len as i32;
+            let mut cache_len_i32 = cache_len as i32;
+            let mut num_heads_i32 = num_heads as i32;
+            let mut attention_ptr = attention.buffer().as_ptr();
+
+            let args = [
+                &mut attention_ptr as *mut _ as *mut c_void,
+                &mut batch_size_i32 as *mut _ as *mut c_void,
+                &mut cache_len_i32 as *mut _ as *mut c_void,
+                &mut num_heads_i32 as *mut _ as *mut c_void,
+            ];
+
+            self.backend.launch_kernel_with_module_shared(
+                &kernel.kernel,
+                grid_dim,
+                (block_dim, 1, 1),
+                &args,
+                0, // shared memory
+            )
+        } else {
+            Err(HipError::GenericError(format!(
+                "Unexpected attention tensor shape: {:?}",
+                dims
+            )))
+        }
     }
 
     /// Compute softmax of attention scores
@@ -263,7 +347,7 @@ impl HipAttentionKernels {
         let mut rows_i32 = rows as i32;
         let mut cols_i32 = cols as i32;
         let mut scores_ptr = attention.buffer().as_ptr();
-        let mut args = [
+        let args = [
             &mut scores_ptr as *mut _ as *mut c_void,
             &mut rows_i32 as *mut _ as *mut c_void,
             &mut cols_i32 as *mut _ as *mut c_void,
@@ -332,7 +416,7 @@ impl HipAttentionKernels {
         }
 
         let out_shape = output.shape();
-        if out_shape.dims() != &[seq_q, num_heads, head_dim] {
+        if out_shape.dims() != [seq_q, num_heads, head_dim] {
             return Err(HipError::GenericError(format!(
                 "Output tensor shape {:?} must be [seq_q, num_heads, head_dim]",
                 out_shape.dims()
@@ -611,6 +695,7 @@ extern "C" __global__ void attention_softmax(float* scores, int rows, int cols) 
 "#;
 
 #[cfg(feature = "rocm")]
+#[allow(dead_code)]
 const ATTENTION_MASK_KERNEL: &str = r#"
 extern "C" __global__ void attention_mask(float* scores, int rows, int cols) {
     int row = blockIdx.x;
@@ -620,6 +705,43 @@ extern "C" __global__ void attention_mask(float* scores, int rows, int cols) {
     }
     if (col > row) {
         scores[row * cols + col] = -INFINITY;
+    }
+}
+"#;
+
+#[cfg(feature = "rocm")]
+const CAUSAL_MASK_KERNEL: &str = r#"
+#include <hip/hip_runtime.h>
+
+constexpr int WARP_SIZE = 32;
+
+extern "C" __global__ void causal_mask_kernel(
+    float* __restrict__ attention,
+    const int batch_size,
+    const int seq_len,
+    const int num_heads
+) {
+    const int query_pos = blockIdx.x;
+    const int head_idx = blockIdx.y;
+    const int batch_idx = blockIdx.z;
+    const int tid = threadIdx.x;
+
+    if (batch_idx >= batch_size || head_idx >= num_heads || query_pos >= seq_len) {
+        return;
+    }
+
+    const int batch_head_offset = batch_idx * num_heads * seq_len * seq_len
+                                + head_idx * seq_len * seq_len;
+    const int row_offset = batch_head_offset + query_pos * seq_len;
+
+    // Only mask future positions (upper triangle)
+    // Preserve current and past positions (lower triangle)
+    for (int key_pos = tid; key_pos < seq_len; key_pos += WARP_SIZE) {
+        if (key_pos > query_pos) {
+            // Mask future position
+            attention[row_offset + key_pos] = -(__builtin_inff());
+        }
+        // else: keep original value (don't modify)
     }
 }
 "#;
@@ -747,7 +869,7 @@ impl HipBackend {
     pub fn compute_attention(
         &self,
         q: &DeviceTensor,
-        attention_scores: &DeviceTensor,
+        _attention_scores: &DeviceTensor,
         softmax_temp: &DeviceTensor,
         kv_cache: &KVCache,
         layer_id: usize,
@@ -767,8 +889,8 @@ impl HipBackend {
         // Retrieve K and V from KV cache
         let (k_tensor, v_tensor) = kv_cache.retrieve(layer_id, seq_len)?;
 
-        let k_shape = k_tensor.shape();
-        let v_shape = v_tensor.shape();
+        let _k_shape = k_tensor.shape();
+        let _v_shape = v_tensor.shape();
 
         // Compute QK^T: [seq_len, cache_seq_len]
         let attention_shape = TensorShape::from_dims(&[seq_len, current_seq_len]);
@@ -814,8 +936,8 @@ impl HipBackend {
         let num_heads = q_shape.dims()[1];
         let head_dim = q_shape.dims()[2];
 
-        let q_flat_size = seq_q * num_heads * head_dim;
-        let k_flat_size = seq_k * num_heads * head_dim;
+        let _q_flat_size = seq_q * num_heads * head_dim;
+        let _k_flat_size = seq_k * num_heads * head_dim;
 
         // Reshape Q and K for batched matrix multiplication
         let q_reshaped = self.reshape_for_qk(q, seq_q, num_heads, head_dim)?;
@@ -929,7 +1051,7 @@ impl HipBackend {
     fn compute_softmax(
         &self,
         attention: &mut DeviceTensor,
-        temp_buffer: &DeviceTensor,
+        _temp_buffer: &DeviceTensor,
     ) -> HipResult<()> {
         let attention_shape = attention.shape();
 
@@ -1093,3 +1215,8 @@ impl HipBackend {
         Ok(())
     }
 }
+
+// Include causal mask tests
+#[cfg(test)]
+#[cfg(feature = "rocm")]
+include!("causal_mask_tests.rs");

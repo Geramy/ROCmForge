@@ -2,6 +2,7 @@
 
 use std::collections::HashMap;
 use std::path::Path;
+use std::sync::Arc;
 
 use crate::backend::{HipBackend, HipError, HipKernel, HipModule};
 use thiserror::Error;
@@ -31,14 +32,14 @@ impl From<HipError> for ExecutorError {
 /// GPU model executor that manages compiled kernels and executes model layers
 #[derive(Debug)]
 pub struct GpuModelExecutor {
-    backend: HipBackend,
+    backend: Arc<HipBackend>,
     compiled_modules: HashMap<String, HipModule>,
     compiled_kernels: HashMap<String, HipKernel>,
 }
 
 impl GpuModelExecutor {
     /// Create a new GPU model executor
-    pub fn new(backend: HipBackend) -> Self {
+    pub fn new(backend: Arc<HipBackend>) -> Self {
         Self {
             backend,
             compiled_modules: HashMap::new(),
@@ -132,7 +133,7 @@ impl GpuModelExecutor {
             .launch_kernel_with_module(
                 kernel,
                 (seq_len as u32, 1, 1),                        // grid_dim
-                (((hidden_size + 31) / 32 * 32) as u32, 1, 1), // block_dim (round up to warp size)
+                ((hidden_size.div_ceil(32) * 32) as u32, 1, 1), // block_dim (round up to warp size)
                 &args,
             )
             .map_err(|e| ExecutorError::ExecutionFailed(e.to_string()))?;

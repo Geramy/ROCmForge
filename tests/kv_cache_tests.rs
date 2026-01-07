@@ -110,7 +110,8 @@ fn test_capacity_limit() {
 #[test]
 fn test_token_appending() {
     let backend = HipBackend::new().unwrap();
-    let config = CacheConfig::new(4, 10, 32, 128, 24).unwrap();
+    // Set max_pages=1 to prevent auto-allocation when page is full
+    let config = CacheConfig::new(4, 1, 32, 128, 24).unwrap();
     let mut cache = KvCache::new(config, backend).unwrap();
 
     // Allocate a page first
@@ -122,7 +123,7 @@ fn test_token_appending() {
         assert!(result.is_ok());
     }
 
-    // Should fail when page is full
+    // Should fail when page is full (max_pages=1 prevents auto-allocation)
     let result = cache.append_token(1, 5);
     assert!(result.is_err());
     assert!(matches!(result, Err(KvCacheError::CapacityExceeded)));
@@ -294,7 +295,8 @@ proptest! {
         page_size in 1usize..10
     ) {
         let backend = HipBackend::new().unwrap();
-        let config = CacheConfig::new(page_size, 20, 32, 128, 24).unwrap();
+        // Set max_pages=1 to prevent auto-allocation
+        let config = CacheConfig::new(page_size, 1, 32, 128, 24).unwrap();
         let mut cache = KvCache::new(config, backend).unwrap();
 
         cache.allocate_page(1).unwrap();
@@ -312,7 +314,7 @@ proptest! {
         // Check that retrieved tokens match the first success_count tokens
         assert_eq!(&retrieved[..], &tokens[..success_count]);
 
-        // Verify that we can't exceed page capacity
+        // Verify that we can't exceed page capacity (max_pages=1 prevents auto-allocation)
         assert!(success_count <= page_size);
     }
 

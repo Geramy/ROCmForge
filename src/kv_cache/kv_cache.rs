@@ -80,14 +80,14 @@ impl CachePage {
         Ok(CachePage {
             page_id,
             sequence_id,
-            tokens: Vec::new(),
+            tokens: Vec::with_capacity(config.page_size),
             key_buffer,
             value_buffer,
             is_free: false,
         })
     }
 
-    pub fn can_append(&self, token: u32) -> bool {
+    pub fn can_append(&self, _token: u32) -> bool {
         self.tokens.len() < self.tokens.capacity() && !self.is_free
     }
 
@@ -189,14 +189,14 @@ impl KvCache {
                 .ok_or(KvCacheError::InvalidSequenceId(sequence_id))?;
             sequence
                 .get_last_page()
-                .ok_or_else(|| KvCacheError::PageNotFound(sequence_id))?
+                .ok_or(KvCacheError::PageNotFound(sequence_id))?
         };
 
         let can_append = {
             let page = self
                 .pages
                 .get(&last_page_id)
-                .ok_or_else(|| KvCacheError::PageNotFound(last_page_id))?;
+                .ok_or(KvCacheError::PageNotFound(last_page_id))?;
             page.can_append(token)
         };
 
@@ -204,7 +204,7 @@ impl KvCache {
             let page = self
                 .pages
                 .get_mut(&last_page_id)
-                .ok_or_else(|| KvCacheError::PageNotFound(last_page_id))?;
+                .ok_or(KvCacheError::PageNotFound(last_page_id))?;
             page.append_token(token)?;
             let sequence = self
                 .sequences
@@ -341,7 +341,8 @@ mod tests {
     #[test]
     fn test_token_appending() {
         let backend = HipBackend::new().unwrap();
-        let config = CacheConfig::new(4, 10, 32, 128, 24).unwrap();
+        // Set max_pages=1 to prevent auto-allocation when page is full
+        let config = CacheConfig::new(4, 1, 32, 128, 24).unwrap();
         let mut cache = KvCache::new(config, backend).unwrap();
 
         // Allocate a page first
@@ -353,7 +354,7 @@ mod tests {
             assert!(result.is_ok());
         }
 
-        // Should fail when page is full
+        // Should fail when page is full (max_pages=1 prevents auto-allocation)
         let result = cache.append_token(1, 5);
         assert!(result.is_err());
         assert!(matches!(result, Err(KvCacheError::CapacityExceeded)));

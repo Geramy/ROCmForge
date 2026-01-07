@@ -74,7 +74,13 @@ fn test_gguf_tensor_enumeration() {
             rocmforge::loader::GgufTensorType::F32
             | rocmforge::loader::GgufTensorType::F16
             | rocmforge::loader::GgufTensorType::Q4_0
-            | rocmforge::loader::GgufTensorType::Q8_0 => {
+            | rocmforge::loader::GgufTensorType::Q4_1
+            | rocmforge::loader::GgufTensorType::Q5_0
+            | rocmforge::loader::GgufTensorType::Q5_1
+            | rocmforge::loader::GgufTensorType::Q8_0
+            | rocmforge::loader::GgufTensorType::Mxfp4
+            | rocmforge::loader::GgufTensorType::Mxfp6E2m3
+            | rocmforge::loader::GgufTensorType::Mxfp6E3m2 => {
                 // Known dtype - OK
             }
         }

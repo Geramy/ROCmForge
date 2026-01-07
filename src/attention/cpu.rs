@@ -1,7 +1,6 @@
 //! CPU backend implementation for attention computation
 
-use crate::attention::{compute, mask, softmax, AttentionError, AttentionResult};
-use crate::tensor::matmul::cpu_matmul_f32;
+use crate::attention::{compute, softmax, AttentionError, AttentionResult};
 
 /// CPU backend for attention computation
 pub struct CpuBackend;

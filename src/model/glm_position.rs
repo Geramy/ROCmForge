@@ -57,11 +57,7 @@ pub struct GlmPositionHandler {
 impl GlmPositionHandler {
     /// Create new GLM position handler
     pub fn new(config: GlmPositionConfig) -> AttentionResult<Self> {
-        let rope = if let Some(rope_config) = &config.rope_config {
-            Some(Rope::new(rope_config.clone()))
-        } else {
-            None
-        };
+        let rope = config.rope_config.as_ref().map(|rope_config| Rope::new(rope_config.clone()));
 
         Ok(Self { config, rope })
     }
@@ -134,7 +130,7 @@ impl GlmPositionHandler {
                 for _b in 0..batch_size {
                     for pos in 0..seq_len {
                         // Use position relative to local window center
-                        let window_center = pos;
+                        let _window_center = pos;
                         let relative_pos = if pos >= *window_size {
                             pos - window_size
                         } else {
@@ -241,30 +237,124 @@ impl GlmPositionHandler {
     #[cfg(feature = "rocm")]
     pub fn apply_position_embeddings_device(
         &self,
-        mut q: crate::backend::DeviceTensor,
-        mut k: crate::backend::DeviceTensor,
+        q: crate::backend::DeviceTensor,
+        k: crate::backend::DeviceTensor,
         position_ids: &[usize],
         num_heads: usize,
     ) -> AttentionResult<(crate::backend::DeviceTensor, crate::backend::DeviceTensor)> {
-        // For now, fallback to CPU implementation
-        // TODO: Implement full GPU position embedding application
-        let q_host = q.to_host_vec().map_err(|e| {
-            AttentionError::DimensionError(format!("Failed to copy Q to host: {}", e))
-        })?;
-        let k_host = k.to_host_vec().map_err(|e| {
-            AttentionError::DimensionError(format!("Failed to copy K to host: {}", e))
-        })?;
+        use crate::backend::DeviceTensor;
+        use crate::backend::hip_backend::HipBackend;
+        use crate::attention::kernels::position_embeddings_gpu_kernel;
+        use crate::loader::mmap_loader::TensorShape;
 
-        let (q_with_pos, k_with_pos) =
-            self.apply_position_embeddings(q_host, k_host, position_ids, num_heads)?;
+        // Validate inputs
+        if position_ids.is_empty() {
+            return Err(AttentionError::DimensionError(
+                "Position IDs cannot be empty".to_string(),
+            ));
+        }
 
-        // Copy back to device
-        q.copy_from_host(&q_with_pos).map_err(|e| {
-            AttentionError::DimensionError(format!("Failed to copy Q back to device: {}", e))
-        })?;
-        k.copy_from_host(&k_with_pos).map_err(|e| {
-            AttentionError::DimensionError(format!("Failed to copy K back to device: {}", e))
-        })?;
+        let seq_len = position_ids.len();
+        let head_dim = self.get_head_dim();
+
+        let expected_q_size = seq_len * num_heads * head_dim;
+        let expected_k_size = seq_len * num_heads * head_dim;
+
+        if q.len() != expected_q_size {
+            return Err(AttentionError::ShapeMismatch(format!(
+                "Query tensor size {} doesn't match expected {} for seq_len={}, heads={}",
+                q.len(),
+                expected_q_size,
+                seq_len,
+                num_heads
+            )));
+        }
+
+        if k.len() != expected_k_size {
+            return Err(AttentionError::ShapeMismatch(format!(
+                "Key tensor size {} doesn't match expected {} for seq_len={}, heads={}",
+                k.len(),
+                expected_k_size,
+                seq_len,
+                num_heads
+            )));
+        }
+
+        // Apply RoPE if configured
+        if let Some(rope) = &self.rope {
+            // Create backend for kernel execution
+            let backend = HipBackend::new().map_err(|e| {
+                AttentionError::DimensionError(format!("Failed to create HIP backend: {}", e))
+            })?;
+
+            // Upload cos/sin to GPU for the positions we need
+            // cos/sin shape: [seq_len, head_dim/2]
+            let half_dim = head_dim / 2;
+
+            // Check position bounds
+            for &pos in position_ids {
+                if pos >= rope.config().max_seq_len {
+                    return Err(AttentionError::DimensionError(format!(
+                        "Position ID {} exceeds maximum sequence length {}",
+                        pos, rope.config().max_seq_len
+                    )));
+                }
+            }
+
+            // Extract cos/sin for the positions we need
+            let mut cos_gpu = Vec::with_capacity(seq_len * half_dim);
+            let mut sin_gpu = Vec::with_capacity(seq_len * half_dim);
+            for &pos in position_ids {
+                let cos_offset = pos * half_dim;
+                let sin_offset = pos * half_dim;
+                cos_gpu.extend_from_slice(&rope.cos()[cos_offset..cos_offset + half_dim]);
+                sin_gpu.extend_from_slice(&rope.sin()[sin_offset..sin_offset + half_dim]);
+            }
+
+            // Create cos/sin device tensors
+            let cos_shape = TensorShape::from_dims(&[seq_len, half_dim]);
+            let cos_device = DeviceTensor::from_host_vec(&backend, cos_gpu, cos_shape).map_err(|e| {
+                AttentionError::DimensionError(format!("Failed to allocate cos tensor: {}", e))
+            })?;
+
+            let sin_shape = TensorShape::from_dims(&[seq_len, half_dim]);
+            let sin_device = DeviceTensor::from_host_vec(&backend, sin_gpu, sin_shape).map_err(|e| {
+                AttentionError::DimensionError(format!("Failed to allocate sin tensor: {}", e))
+            })?;
+
+            // Get device pointers
+            let q_ptr = q.buffer().as_mut_ptr() as *mut f32;
+            let k_ptr = k.buffer().as_mut_ptr() as *mut f32;
+            let cos_ptr = cos_device.as_ptr() as *const f32;
+            let sin_ptr = sin_device.as_ptr() as *const f32;
+
+            // Call GPU kernel
+            let result = unsafe {
+                position_embeddings_gpu_kernel(
+                    q_ptr,
+                    k_ptr,
+                    cos_ptr,
+                    sin_ptr,
+                    seq_len as u32,
+                    num_heads as u32,
+                    head_dim as u32,
+                )
+            };
+
+            if result != 0 {
+                return Err(AttentionError::DimensionError(
+                    "GPU kernel execution failed".to_string()
+                ));
+            }
+
+            // Synchronize to ensure kernel completes
+            backend.synchronize().map_err(|e| {
+                AttentionError::DimensionError(format!("GPU synchronization failed: {}", e))
+            })?;
+        } else {
+            // For GLM without RoPE, we might apply other position encoding schemes
+            // For now, leave tensors unchanged (could add learned position embeddings here)
+        }
 
         Ok((q, k))
     }
@@ -378,8 +468,10 @@ impl GlmPositionHandler {
 
 /// GLM attention patterns
 #[derive(Debug, Clone)]
+#[derive(Default)]
 pub enum GlmAttentionPattern {
     /// Standard causal attention (default for GLM)
+    #[default]
     Causal,
     /// Bidirectional attention
     Bidirectional,
@@ -394,11 +486,6 @@ pub enum GlmAttentionPattern {
     Custom(fn(usize) -> usize),
 }
 
-impl Default for GlmAttentionPattern {
-    fn default() -> Self {
-        GlmAttentionPattern::Causal
-    }
-}
 
 #[cfg(test)]
 mod tests {
@@ -433,11 +520,24 @@ mod tests {
             .get_attention_mask(4, &GlmAttentionPattern::Causal)
             .unwrap();
 
-        // Check causal masking
-        assert_eq!(mask[0 * 4 + 1], 0.0); // Can attend
-        assert_eq!(mask[0 * 4 + 2], 0.0); // Can attend
-        assert_eq!(mask[1 * 4 + 0], f32::NEG_INFINITY); // Cannot attend (causal)
-        assert_eq!(mask[2 * 4 + 1], f32::NEG_INFINITY); // Cannot attend (causal)
+        // Causal mask: position i can only attend to positions <= i
+        // Mask uses NEG_INFINITY for positions that CANNOT be attended to
+
+        // Position 0 can only attend to position 0 (self)
+        assert_eq!(mask[0 * 4 + 0], 0.0); // Can attend to self
+        assert_eq!(mask[0 * 4 + 1], f32::NEG_INFINITY); // Cannot attend to future position 1
+        assert_eq!(mask[0 * 4 + 2], f32::NEG_INFINITY); // Cannot attend to future position 2
+
+        // Position 1 can attend to positions 0 and 1
+        assert_eq!(mask[1 * 4 + 0], 0.0); // Can attend to past position 0
+        assert_eq!(mask[1 * 4 + 1], 0.0); // Can attend to self
+        assert_eq!(mask[1 * 4 + 2], f32::NEG_INFINITY); // Cannot attend to future position 2
+
+        // Position 2 can attend to positions 0, 1, and 2
+        assert_eq!(mask[2 * 4 + 0], 0.0); // Can attend to past position 0
+        assert_eq!(mask[2 * 4 + 1], 0.0); // Can attend to past position 1
+        assert_eq!(mask[2 * 4 + 2], 0.0); // Can attend to self
+        assert_eq!(mask[2 * 4 + 3], f32::NEG_INFINITY); // Cannot attend to future position 3
     }
 
     #[test]

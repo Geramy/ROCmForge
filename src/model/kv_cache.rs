@@ -1,7 +1,7 @@
 //! KV Cache for efficient GPU memory management during inference
 //! Fully GPU-resident with preallocated memory for max sequence length
 
-use crate::backend::{DeviceTensor, HipBackend, HipError, HipResult};
+use crate::backend::{DeviceTensor, HipBackend, HipError};
 use crate::loader::mmap_loader::TensorShape;
 use thiserror::Error;
 
@@ -49,9 +49,9 @@ impl KVCache {
         // Preallocate keys and values for all layers
         let mut keys = Vec::with_capacity(num_layers);
         let mut values = Vec::with_capacity(num_layers);
-        let mut current_seq_len = vec![0; num_layers];
+        let current_seq_len = vec![0; num_layers];
 
-        for layer in 0..num_layers {
+        for _layer in 0..num_layers {
             // Key/Value tensor shape: [max_seq_len, num_heads, head_dim]
             let kv_shape = TensorShape::from_dims(&[max_seq_len, num_heads, head_dim]);
 

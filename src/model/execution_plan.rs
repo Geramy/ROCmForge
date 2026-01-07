@@ -94,6 +94,7 @@ pub struct LayerPlan {
     pub norm2_bias: Option<DeviceTensor>,
 }
 
+#[allow(dead_code)]
 impl ExecutionPlan {
     /// Create a new execution plan from model configuration
     ///
@@ -108,10 +109,20 @@ impl ExecutionPlan {
         }
 
         let embedding_shape = TensorShape::from_dims(&[config.vocab_size, config.hidden_size]);
-        let embedding_weights = DeviceTensor::empty(backend, embedding_shape)?;
+        let mut embedding_weights = DeviceTensor::empty(backend, embedding_shape)?;
+        // Initialize with small non-zero values
+        let embedding_data: Vec<f32> = (0..config.vocab_size * config.hidden_size)
+            .map(|i| ((i as f32) * 0.001))
+            .collect();
+        embedding_weights.buffer().copy_from_host(&embedding_data)?;
 
         let lm_head_shape = TensorShape::from_dims(&[config.hidden_size, config.vocab_size]);
-        let lm_head = DeviceTensor::empty(backend, lm_head_shape)?;
+        let mut lm_head = DeviceTensor::empty(backend, lm_head_shape)?;
+        // Initialize with small non-zero values (transposed from embedding)
+        let lm_head_data: Vec<f32> = (0..config.hidden_size * config.vocab_size)
+            .map(|i| ((i as f32) * 0.001))
+            .collect();
+        lm_head.buffer().copy_from_host(&lm_head_data)?;
 
         Ok(ExecutionPlan {
             layers,
@@ -295,7 +306,7 @@ impl ExecutionPlan {
         embedding_weights: &DeviceTensor,
     ) -> HipResult<DeviceTensor> {
         let seq_len = input_tokens.len();
-        let hidden_size = self.config.hidden_size;
+        let _hidden_size = self.config.hidden_size;
 
         // Performance profiling: Start timing
         let start_time = std::time::Instant::now();
@@ -431,12 +442,12 @@ impl ExecutionPlan {
         backend: &HipBackend,
         hidden_states: &DeviceTensor,
         layer_plan: &LayerPlan,
-        mut kv_cache: Option<&mut KVCache>,
+        kv_cache: Option<&mut KVCache>,
         layer_idx: usize,
     ) -> HipResult<DeviceTensor> {
         let input_shape = hidden_states.shape().dims();
-        let seq_len = input_shape[0];
-        let hidden_size = input_shape[1];
+        let _seq_len = input_shape[0];
+        let _hidden_size = input_shape[1];
 
         // Store input for residual connection
         let residual = hidden_states.clone();
@@ -522,7 +533,7 @@ impl ExecutionPlan {
         qkv_bias: Option<&DeviceTensor>,
         o_proj: &DeviceTensor,
         o_proj_bias: Option<&DeviceTensor>,
-        mut kv_cache: Option<&mut KVCache>,
+        kv_cache: Option<&mut KVCache>,
         layer_idx: usize,
     ) -> HipResult<DeviceTensor> {
         let input_shape = hidden_states.shape().dims();
@@ -546,7 +557,7 @@ impl ExecutionPlan {
             &q_reshaped,
             &k_reshaped,
             &v_reshaped,
-            kv_cache.as_deref_mut(),
+            kv_cache,
             layer_idx,
         )?;
 
@@ -576,7 +587,7 @@ impl ExecutionPlan {
     ) -> HipResult<DeviceTensor> {
         // Use existing HIP backend MLP implementation
         let input_shape = hidden_states.shape().dims();
-        let output_shape = TensorShape::from_dims(&input_shape);
+        let output_shape = TensorShape::from_dims(input_shape);
         let mut output = DeviceTensor::empty(backend, output_shape)?;
 
         backend.mlp_swiglu(
@@ -598,7 +609,7 @@ impl ExecutionPlan {
         weight: &DeviceTensor,
         bias: Option<&DeviceTensor>,
     ) -> HipResult<DeviceTensor> {
-        use crate::backend::hip_blas::{sgemm, HipBlasHandle, HIPBLAS_OP_N, HIPBLAS_OP_T};
+        use crate::backend::hip_blas::HipBlasHandle;
         use crate::tensor::matmul::matmul_f32;
 
         let input_shape = input.shape().dims();
@@ -750,7 +761,7 @@ impl ExecutionPlan {
             cache.append(layer_idx, k, v)?;
             let current_len = cache.get_current_length(layer_idx)?;
             let attention_shape = TensorShape::from_dims(&[seq_len, current_len]);
-            let mut attention_scores = DeviceTensor::empty(backend, attention_shape.clone())?;
+            let attention_scores = DeviceTensor::empty(backend, attention_shape.clone())?;
             let softmax_temp = DeviceTensor::empty(backend, attention_shape)?;
             let cache_ref: &KVCache = &*cache;
             return attention_kernels.compute_attention(
@@ -1155,7 +1166,7 @@ impl ExecutionPlan {
 
     /// Map LLaMA-style attention weights (fused QKV with transformer.layers.N. prefix)
     fn map_llama_attention_weights(
-        backend: &HipBackend,
+        _backend: &HipBackend,
         config: &ModelConfig,
         gpu_tensors: &std::collections::HashMap<String, DeviceTensor>,
         layer_idx: usize,
@@ -1277,11 +1288,11 @@ impl ExecutionPlan {
         }
 
         // For Qwen2, K and V may be [hidden_size, head_dim] or [hidden_size, hidden_size]
-        let head_dim = config.head_dim;
+        let _head_dim = config.head_dim;
 
         // Check if K and V need padding
-        let k_needs_padding = k_shape[1] != config.hidden_size;
-        let v_needs_padding = v_shape[1] != config.hidden_size;
+        let _k_needs_padding = k_shape[1] != config.hidden_size;
+        let _v_needs_padding = v_shape[1] != config.hidden_size;
 
         // Helper function to pad tensor if needed
         let pad_tensor = |tensor: &DeviceTensor, target_cols: usize| -> HipResult<DeviceTensor> {
@@ -1292,7 +1303,7 @@ impl ExecutionPlan {
 
             // Create padded tensor: [hidden_size, target_cols]
             let padded_shape = TensorShape::from_dims(&[current_shape[0], target_cols]);
-            let mut padded = DeviceTensor::empty(backend, padded_shape.clone())?;
+            let _padded = DeviceTensor::empty(backend, padded_shape.clone())?;
 
             // Copy original data (column-major layout: copy column by column)
             // For now, copy row by row from source
@@ -1317,7 +1328,7 @@ impl ExecutionPlan {
         // Concatenate Q, K, V along dimension 1 (columns)
         // Output shape: [hidden_size, 3 * hidden_size]
         let qkv_shape = TensorShape::from_dims(&[config.hidden_size, 3 * config.hidden_size]);
-        let mut qkv_weight = DeviceTensor::empty(backend, qkv_shape.clone())?;
+        let _qkv_weight = DeviceTensor::empty(backend, qkv_shape.clone())?;
 
         // Copy Q, K, V data into QKV tensor
         let q_host = q_weight.to_host_vec()?;
@@ -1553,7 +1564,7 @@ impl ExecutionPlan {
 
     /// Map LLaMA-style MLP weights (transformer.layers.N.* prefix)
     fn map_llama_mlp_weights(
-        backend: &HipBackend,
+        _backend: &HipBackend,
         config: &ModelConfig,
         gpu_tensors: &std::collections::HashMap<String, DeviceTensor>,
         layer_idx: usize,
@@ -1763,16 +1774,12 @@ impl ExecutionPlan {
             DeviceTensor::from_host_vec(backend, zeros, bias_shape)
         };
 
-        let attn_norm_bias_variants = vec![
-            format!("{}.attn_norm.bias", prefix),
+        let attn_norm_bias_variants = [format!("{}.attn_norm.bias", prefix),
             format!("{}.attention_norm.bias", prefix),
-            format!("{}.input_layernorm.bias", prefix),
-        ];
+            format!("{}.input_layernorm.bias", prefix)];
 
-        let ffn_norm_bias_variants = vec![
-            format!("{}.ffn_norm.bias", prefix),
-            format!("{}.post_attention_layernorm.bias", prefix),
-        ];
+        let ffn_norm_bias_variants = [format!("{}.ffn_norm.bias", prefix),
+            format!("{}.post_attention_layernorm.bias", prefix)];
 
         let attn_norm_bias = attn_norm_bias_variants
             .iter()
@@ -1893,7 +1900,7 @@ impl ExecutionPlan {
 
     /// Map LLaMA-style layer norm weights (transformer.layers.N.*)
     fn map_llama_layer_norm_weights(
-        backend: &HipBackend,
+        _backend: &HipBackend,
         config: &ModelConfig,
         gpu_tensors: &std::collections::HashMap<String, DeviceTensor>,
         layer_idx: usize,
@@ -2027,15 +2034,15 @@ impl LayerPlan {
     ///
     /// Initializes all weight tensors for a single transformer layer.
     /// Currently creates synthetic weights for testing.
-    fn new(backend: &HipBackend, config: &ModelConfig, layer_idx: usize) -> HipResult<Self> {
+    fn new(backend: &HipBackend, config: &ModelConfig, _layer_idx: usize) -> HipResult<Self> {
         let hidden_size = config.hidden_size;
         let intermediate_size = config.intermediate_size;
 
         // Create synthetic weights for testing
         // In a real implementation, these would be loaded from model files
 
-        // QKV projection weight: [3 * hidden_size, hidden_size]
-        let qkv_weight_shape = TensorShape::from_dims(&[3 * hidden_size, hidden_size]);
+        // QKV projection weight: [hidden_size, 3 * hidden_size] (transposed for matmul)
+        let qkv_weight_shape = TensorShape::from_dims(&[hidden_size, 3 * hidden_size]);
         let qkv_weight = DeviceTensor::empty(backend, qkv_weight_shape)?;
 
         // QKV bias: [3 * hidden_size]
@@ -2044,23 +2051,38 @@ impl LayerPlan {
 
         // Output projection: [hidden_size, hidden_size]
         let o_proj_shape = TensorShape::from_dims(&[hidden_size, hidden_size]);
-        let o_proj = DeviceTensor::empty(backend, o_proj_shape)?;
+        let mut o_proj = DeviceTensor::empty(backend, o_proj_shape)?;
+        // Initialize with non-zero identity-like matrix
+        let o_proj_data: Vec<f32> = (0..hidden_size * hidden_size)
+            .map(|i| if i % (hidden_size + 1) == 0 { 1.0 } else { 0.0 })
+            .collect();
+        o_proj.buffer().copy_from_host(&o_proj_data)?;
 
         // Output projection bias: [hidden_size]
         let o_proj_bias_shape = TensorShape::from_dims(&[hidden_size]);
         let o_proj_bias = Some(DeviceTensor::empty(backend, o_proj_bias_shape)?);
 
-        // MLP FC1: [intermediate_size, hidden_size]
-        let mlp_fc1_shape = TensorShape::from_dims(&[intermediate_size, hidden_size]);
-        let mlp_fc1 = DeviceTensor::empty(backend, mlp_fc1_shape)?;
+        // MLP FC1: [hidden_size, intermediate_size] (transposed for matmul)
+        let mlp_fc1_shape = TensorShape::from_dims(&[hidden_size, intermediate_size]);
+        let mut mlp_fc1 = DeviceTensor::empty(backend, mlp_fc1_shape)?;
+        // Initialize with small non-zero values
+        let mlp_fc1_data: Vec<f32> = (0..hidden_size * intermediate_size)
+            .map(|i| ((i as f32) * 0.001 + 0.01))
+            .collect();
+        mlp_fc1.buffer().copy_from_host(&mlp_fc1_data)?;
 
         // MLP FC1 bias: [intermediate_size]
         let mlp_fc1_bias_shape = TensorShape::from_dims(&[intermediate_size]);
         let mlp_fc1_bias = Some(DeviceTensor::empty(backend, mlp_fc1_bias_shape)?);
 
-        // MLP FC2: [hidden_size, intermediate_size]
-        let mlp_fc2_shape = TensorShape::from_dims(&[hidden_size, intermediate_size]);
-        let mlp_fc2 = DeviceTensor::empty(backend, mlp_fc2_shape)?;
+        // MLP FC2: [intermediate_size, hidden_size] (transposed for matmul)
+        let mlp_fc2_shape = TensorShape::from_dims(&[intermediate_size, hidden_size]);
+        let mut mlp_fc2 = DeviceTensor::empty(backend, mlp_fc2_shape)?;
+        // Initialize with small non-zero values
+        let mlp_fc2_data: Vec<f32> = (0..intermediate_size * hidden_size)
+            .map(|i| ((i as f32) * 0.001 + 0.01))
+            .collect();
+        mlp_fc2.buffer().copy_from_host(&mlp_fc2_data)?;
 
         // MLP FC2 bias: [hidden_size]
         let mlp_fc2_bias_shape = TensorShape::from_dims(&[hidden_size]);
@@ -2156,24 +2178,23 @@ impl LayerPlan {
 
     /// Create layer plan from GGUF tensors
     fn from_gguf_tensors(
-        backend: &HipBackend,
+        _backend: &HipBackend,
         config: &ModelConfig,
         gpu_tensors: &std::collections::HashMap<String, DeviceTensor>,
         layer_idx: usize,
     ) -> HipResult<Self> {
-        let hidden_size = config.hidden_size;
-        let intermediate_size = config.intermediate_size;
+        let _hidden_size = config.hidden_size;
+        let _intermediate_size = config.intermediate_size;
 
         // Helper to get tensor with error handling
         let get_tensor = |name: &str| -> HipResult<DeviceTensor> {
             gpu_tensors
-                .get(name)
-                .map(|t| t.clone())
+                .get(name).cloned()
                 .ok_or_else(|| HipError::GenericError(format!("Tensor '{}' not found", name)))
         };
 
         let get_optional_tensor =
-            |name: &str| -> Option<DeviceTensor> { gpu_tensors.get(name).map(|t| t.clone()) };
+            |name: &str| -> Option<DeviceTensor> { gpu_tensors.get(name).cloned() };
 
         // Map GGUF tensor names to layer plan tensors
         let layer_prefix = format!("layers.{}", layer_idx);
@@ -2274,3 +2295,9 @@ impl LayerPlan {
         })
     }
 }
+
+// Include GPU attention integration tests
+#[cfg(test)]
+#[cfg(feature = "rocm")]
+include!("gpu_attention_integration_tests.rs");
+

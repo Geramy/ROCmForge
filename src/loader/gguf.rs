@@ -18,8 +18,352 @@ use std::io::{Read, Seek, SeekFrom};
 /// GGUF file magic number
 const GGUF_MAGIC: &[u8] = b"GGUF";
 
+/// E8M0 scale format (8-bit exponent only)
+///
+/// Per OCP MX Specification v1.0:
+/// - 8-bit signed exponent
+/// - Value = 2^exponent
+/// - Range: 2^(-127) to 2^(127)
+/// - Used as block scale for MXFP4/MXFP6
+#[repr(C)]
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct E8M0 {
+    pub exponent: i8,
+}
+
+impl E8M0 {
+    /// Convert E8M0 to f32
+    pub fn to_f32(&self) -> f32 {
+        2.0_f32.powi(self.exponent as i32)
+    }
+
+    /// Create E8M0 from f32
+    /// E8M0 represents 2^exponent as a scale factor
+    pub fn from_f32(value: f32) -> Self {
+        if value == 0.0 || value.is_nan() {
+            return E8M0 { exponent: 0 };
+        }
+
+        if value.is_infinite() {
+            return E8M0 { exponent: 127 };
+        }
+
+        // E8M0 scale should be the largest value in the block
+        // so we can represent values in [0, scale] range
+        let abs_val = value.abs();
+        let exp = abs_val.log2().clamp(-127.0, 127.0).round() as i8;
+        E8M0 { exponent: exp }
+    }
+}
+
+/// MXFP block (block-scaled floating-point)
+///
+/// Per OCP MX Specification v1.0:
+/// - Block size: 32 elements
+/// - Scale: E8M0 (1 byte)
+/// - Elements: packed 4-bit or 6-bit values
+#[repr(C)]
+#[derive(Debug, Clone)]
+pub struct MxfpBlock {
+    pub scale: E8M0,
+    pub elements: Vec<u8>,
+}
+
+impl MxfpBlock {
+    /// Create new MXFP4 block (4-bit elements)
+    pub fn new_mxfp4() -> Self {
+        MxfpBlock {
+            scale: E8M0 { exponent: 0 },
+            elements: vec![0u8; 16], // 32 elements * 4 bits / 8
+        }
+    }
+
+    /// Create new MXFP6 block (6-bit elements)
+    pub fn new_mxfp6() -> Self {
+        MxfpBlock {
+            scale: E8M0 { exponent: 0 },
+            elements: vec![0u8; 24], // 32 elements * 6 bits / 8
+        }
+    }
+
+    /// Pack f32 values into MXFP4 block
+    pub fn pack_mxfp4(values: &[f32]) -> Self {
+        // Find max absolute value for scale
+        let max_val = values.iter().map(|v| v.abs()).fold(0.0_f32, f32::max);
+
+        // Handle edge case where all values are zero
+        let scale = if max_val == 0.0 {
+            E8M0 { exponent: 0 }
+        } else {
+            // Scale is the max value itself (as power of 2)
+            // This normalizes values to [0, 1] range for encoding
+            E8M0::from_f32(max_val)
+        };
+
+        let scale_f32 = scale.to_f32();
+
+        // Encode values as E2M1 (4-bit)
+        let mut packed = vec![0u8; 16];
+        for (i, &val) in values.iter().take(32).enumerate() {
+            // Normalize value by scale (should now be in range [0, 1])
+            let normalized = if scale_f32 > 0.0 {
+                val / scale_f32
+            } else {
+                val
+            };
+
+            let encoded = Self::encode_e2m1(normalized);
+            let byte_idx = i / 2;
+            let nibble = i % 2;
+
+            if nibble == 0 {
+                packed[byte_idx] |= encoded << 4;
+            } else {
+                packed[byte_idx] |= encoded & 0x0F;
+            }
+        }
+
+        MxfpBlock {
+            scale,
+            elements: packed,
+        }
+    }
+
+    /// Unpack MXFP4 block to f32 values
+    pub fn unpack_mxfp4(&self) -> Vec<f32> {
+        let mut values = vec![0.0f32; 32];
+        let scale_f32 = self.scale.to_f32();
+
+        for i in 0..32 {
+            let byte_idx = i / 2;
+            let nibble = if i % 2 == 0 {
+                (self.elements[byte_idx] >> 4) & 0x0F
+            } else {
+                self.elements[byte_idx] & 0x0F
+            };
+
+            let decoded = Self::decode_e2m1(nibble);
+            let mut val = scale_f32 * decoded;
+            val = val.clamp(-8.0, 8.0); // MXFP4 range per OCP MX Spec v1.0
+            values[i] = val;
+        }
+
+        values
+    }
+
+    /// Pack f32 values into MXFP6 block
+    pub fn pack_mxfp6(values: &[f32]) -> Self {
+        // Find max absolute value for scale
+        let max_val = values.iter().map(|v| v.abs()).fold(0.0_f32, f32::max);
+
+        // Handle edge case where all values are zero
+        let scale = if max_val == 0.0 {
+            E8M0 { exponent: 0 }
+        } else {
+            // Scale is the max value itself (as power of 2)
+            // This normalizes values to [0, 1] range for encoding
+            E8M0::from_f32(max_val)
+        };
+
+        let scale_f32 = scale.to_f32();
+
+        // Encode values as E2M3 (6-bit)
+        let packed = Self::pack_6bit_values(
+            &values.iter().take(32).map(|&v| {
+                // Normalize value by scale (should now be in range [0, 1])
+                let normalized = if scale_f32 > 0.0 {
+                    v / scale_f32
+                } else {
+                    v
+                };
+                Self::encode_e2m3(normalized)
+            }).collect::<Vec<u8>>()
+        );
+
+        MxfpBlock {
+            scale,
+            elements: packed,
+        }
+    }
+
+    /// Unpack MXFP6 block to f32 values
+    pub fn unpack_mxfp6(&self) -> Vec<f32> {
+        let unpacked_bits = Self::unpack_6bit_values(&self.elements, 32);
+        let scale_f32 = self.scale.to_f32();
+
+        unpacked_bits.iter().map(|&bits| {
+            let decoded = Self::decode_e2m3(bits);
+            let mut val = scale_f32 * decoded;
+            val = val.clamp(-7.5, 7.5); // MXFP6 range
+            val
+        }).collect()
+    }
+
+    /// Get packed size in bytes
+    pub fn packed_size(&self) -> usize {
+        1 + self.elements.len() // scale + elements
+    }
+
+    /// Encode f32 as E2M1 (4-bit): sign(1) + exp(2) + mant(1)
+    /// E2M1 format: value = (-1)^sign * 2^(exp-1) * (1 + mant)
+    /// Input should be normalized to approximately [0, 8] range per OCP MX Spec v1.0
+    pub fn encode_e2m1(value: f32) -> u8 {
+        if value == 0.0 {
+            return 0b0000;
+        }
+
+        let sign = if value < 0.0 { 0b1000 } else { 0b0000 };
+        let abs = value.abs();
+
+        // E2M1 can represent values in [0.5, 8.0] with exp in [0, 3] and mant in [0, 1]
+        // For values < 0.5, we encode as 0.5 (minimum positive value)
+        let clamped = abs.max(0.5).min(8.0);
+
+        // Try all 4 combinations and pick the closest
+        let mut best_encoding = 0u8;
+        let mut best_error = f32::MAX;
+
+        for exp_bits in 0..4 {
+            for mant_bits in 0..2 {
+                let exp = exp_bits as i32 - 1;
+                let mant = mant_bits as f32;
+                let decoded = (1.0 + mant) * 2_f32.powi(exp);
+
+                let error = (clamped - decoded).abs();
+                if error < best_error {
+                    best_error = error;
+                    best_encoding = (exp_bits << 1) | mant_bits;
+                }
+            }
+        }
+
+        sign | best_encoding
+    }
+
+    /// Decode E2M1 (4-bit) to f32
+    pub fn decode_e2m1(bits: u8) -> f32 {
+        if bits == 0 {
+            return 0.0;
+        }
+
+        let sign = if bits & 0x08 != 0 { -1.0 } else { 1.0 };
+        let exp = ((bits >> 1) & 0x03) as i32 - 1;
+        let mant = (bits & 0x01) as f32;
+
+        sign * (1.0 + mant) * 2_f32.powi(exp)
+    }
+
+    /// Encode f32 as E2M3 (6-bit): sign(1) + exp(2) + mant(3)
+    /// E2M3 format: value = (-1)^sign * 2^(exp-1) * (1 + mant/8)
+    /// Input should be normalized to approximately [0, 7.5] range
+    pub fn encode_e2m3(value: f32) -> u8 {
+        if value == 0.0 {
+            return 0b000000;
+        }
+
+        let sign = if value < 0.0 { 0b100000 } else { 0b000000 };
+        let abs = value.abs();
+
+        // E2M3 can represent values in [0.5, 7.5] with exp in [0, 3] and mant in [0, 7]
+        // For values < 0.5, we encode as 0.5 (minimum positive value)
+        let clamped = abs.max(0.5).min(7.5);
+
+        // Try all 32 combinations and pick the closest
+        let mut best_encoding = 0u8;
+        let mut best_error = f32::MAX;
+
+        for exp_bits in 0..4 {
+            for mant_bits in 0u8..8 {
+                let exp = exp_bits as i32 - 1;
+                let mant = mant_bits as f32 / 8.0;
+                let decoded = (1.0 + mant) * 2_f32.powi(exp);
+
+                let error = (clamped - decoded).abs();
+                if error < best_error {
+                    best_error = error;
+                    best_encoding = (exp_bits << 3) | mant_bits;
+                }
+            }
+        }
+
+        sign | best_encoding
+    }
+
+    /// Decode E2M3 (6-bit) to f32
+    pub fn decode_e2m3(bits: u8) -> f32 {
+        if bits == 0 {
+            return 0.0;
+        }
+
+        let sign = if bits & 0x20 != 0 { -1.0 } else { 1.0 };
+        let exp = ((bits >> 3) & 0x03) as i32 - 1;
+        let mant = ((bits & 0x07) as f32) / 8.0;
+
+        sign * (1.0 + mant) * 2_f32.powi(exp)
+    }
+
+    /// Pack 6-bit values into bytes
+    /// Packs values in little-endian bit order
+    pub fn pack_6bit_values(values: &[u8]) -> Vec<u8> {
+        let mut packed = vec![0u8; (values.len() * 6).div_ceil(8)];
+        for (i, &val) in values.iter().enumerate() {
+            let bit_pos = i * 6;
+            let byte_idx = bit_pos / 8;
+            let bit_offset = bit_pos % 8;
+
+            // Mask value to 6 bits
+            let val_6bit = val & 0x3F;
+
+            if bit_offset <= 2 {
+                // Fits entirely in current byte (with room to spare)
+                packed[byte_idx] |= val_6bit << bit_offset;
+            } else {
+                // Spans across two bytes
+                let bits_in_first_byte = 8 - bit_offset;
+                let _bits_in_second_byte = 6 - bits_in_first_byte;
+
+                packed[byte_idx] |= val_6bit << bit_offset;
+                packed[byte_idx + 1] |= val_6bit >> bits_in_first_byte;
+            }
+        }
+        packed
+    }
+
+    /// Unpack 6-bit values from bytes
+    /// Unpacks values in little-endian bit order
+    pub fn unpack_6bit_values(packed: &[u8], count: usize) -> Vec<u8> {
+        let mut values = vec![0u8; count];
+        for i in 0..count {
+            let bit_pos = i * 6;
+            let byte_idx = bit_pos / 8;
+            let bit_offset = bit_pos % 8;
+
+            if byte_idx < packed.len() {
+                if bit_offset <= 2 {
+                    // Value fits entirely in current byte
+                    values[i] = (packed[byte_idx] >> bit_offset) & 0x3F;
+                } else {
+                    // Value spans two bytes
+                    let bits_from_first_byte = 8 - bit_offset;
+                    let bits_from_second_byte = 6 - bits_from_first_byte;
+
+                    let first_part = (packed[byte_idx] >> bit_offset) & ((1 << bits_from_first_byte) - 1);
+                    let second_part = if byte_idx + 1 < packed.len() {
+                        packed[byte_idx + 1] & ((1 << bits_from_second_byte) - 1)
+                    } else {
+                        0
+                    };
+
+                    values[i] = first_part | (second_part << bits_from_first_byte);
+                }
+            }
+        }
+        values
+    }
+}
+
 /// GGUF tensor types (ggml_type enum values from ggml.h)
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Copy)]
 pub enum GgufTensorType {
     F32 = 0,   // GGML_TYPE_F32
     F16 = 1,   // GGML_TYPE_F16
@@ -28,10 +372,16 @@ pub enum GgufTensorType {
     Q5_0 = 6,  // GGML_TYPE_Q5_0
     Q5_1 = 7,  // GGML_TYPE_Q5_1
     Q8_0 = 8,  // GGML_TYPE_Q8_0
+
+    // MXFP types (OCP MX Specification v1.0)
+    // Using enum values 20-22 to avoid conflicts with future ggml types
+    Mxfp4 = 20,      // OCP MXFP4-E2M1 (4-bit)
+    Mxfp6E2m3 = 21,  // OCP MXFP6-E2M3 (6-bit, recommended)
+    Mxfp6E3m2 = 22,  // OCP MXFP6-E3M2 (6-bit)
 }
 
 impl GgufTensorType {
-    fn from_u32(value: u32) -> Result<Self> {
+    pub fn from_u32(value: u32) -> Result<Self> {
         match value {
             0 => Ok(GgufTensorType::F32),
             1 => Ok(GgufTensorType::F16),
@@ -40,11 +390,14 @@ impl GgufTensorType {
             6 => Ok(GgufTensorType::Q5_0),
             7 => Ok(GgufTensorType::Q5_1),
             8 => Ok(GgufTensorType::Q8_0),
+            20 => Ok(GgufTensorType::Mxfp4),
+            21 => Ok(GgufTensorType::Mxfp6E2m3),
+            22 => Ok(GgufTensorType::Mxfp6E3m2),
             _ => Err(anyhow!("Unknown tensor type: {}", value)),
         }
     }
 
-    fn to_string(&self) -> &'static str {
+    pub fn to_string(&self) -> &'static str {
         match self {
             GgufTensorType::F32 => "FP32",
             GgufTensorType::F16 => "FP16",
@@ -53,10 +406,13 @@ impl GgufTensorType {
             GgufTensorType::Q5_0 => "Q5_0",
             GgufTensorType::Q5_1 => "Q5_1",
             GgufTensorType::Q8_0 => "Q8_0",
+            GgufTensorType::Mxfp4 => "MXFP4",
+            GgufTensorType::Mxfp6E2m3 => "MXFP6_E2M3",
+            GgufTensorType::Mxfp6E3m2 => "MXFP6_E3M2",
         }
     }
 
-    fn element_size(&self) -> usize {
+    pub fn element_size(&self) -> usize {
         match self {
             GgufTensorType::F32 => 4,
             GgufTensorType::F16 => 2,
@@ -78,6 +434,10 @@ impl GgufTensorType {
             }
             GgufTensorType::Q8_0 => {
                 // Q8_0: block_size=32, each block has 1 scale (f32) + 32 quants (u8)
+                32
+            }
+            GgufTensorType::Mxfp4 | GgufTensorType::Mxfp6E2m3 | GgufTensorType::Mxfp6E3m2 => {
+                // MXFP formats: block_size=32
                 32
             }
         }
@@ -145,34 +505,45 @@ impl GgufTensor {
             GgufTensorType::F16 => self.total_elements() * 2,
             GgufTensorType::Q4_0 => {
                 // Q4_0: block_size=32, each block has 1 scale (f32) + 32 quants (u8)
-                let blocks = (self.total_elements() + 31) / 32;
+                let blocks = self.total_elements().div_ceil(32);
                 blocks * (4 + 32)
             }
             GgufTensorType::Q4_1 => {
                 // Q4_1: similar structure to Q4_0
-                let blocks = (self.total_elements() + 31) / 32;
+                let blocks = self.total_elements().div_ceil(32);
                 blocks * (4 + 32)
             }
             GgufTensorType::Q5_0 => {
                 // Q5_0: block_size=32
-                let blocks = (self.total_elements() + 31) / 32;
+                let blocks = self.total_elements().div_ceil(32);
                 blocks * (4 + 32)
             }
             GgufTensorType::Q5_1 => {
                 // Q5_1: block_size=32
-                let blocks = (self.total_elements() + 31) / 32;
+                let blocks = self.total_elements().div_ceil(32);
                 blocks * (4 + 32)
             }
             GgufTensorType::Q8_0 => {
                 // Q8_0: block_size=32, each block has 1 scale (f32) + 32 quants (u8)
-                let blocks = (self.total_elements() + 31) / 32;
+                let blocks = self.total_elements().div_ceil(32);
                 blocks * (4 + 32)
+            }
+            GgufTensorType::Mxfp4 => {
+                // MXFP4: block_size=32, each block has 1 scale (E8M0) + 32*4 bits data
+                let blocks = self.total_elements().div_ceil(32);
+                blocks * (1 + 16) // 1 byte scale + 16 bytes data
+            }
+            GgufTensorType::Mxfp6E2m3 | GgufTensorType::Mxfp6E3m2 => {
+                // MXFP6: block_size=32, each block has 1 scale (E8M0) + 32*6 bits data
+                let blocks = self.total_elements().div_ceil(32);
+                blocks * (1 + 24) // 1 byte scale + 24 bytes data
             }
         }
     }
 }
 
 /// GGUF file loader
+#[derive(Debug)]
 pub struct GgufLoader {
     path: String,
     metadata: GgufMetadata,
@@ -267,12 +638,10 @@ impl GgufLoader {
             },
             head_dim: if self.metadata.head_dim > 0 {
                 self.metadata.head_dim
+            } else if self.metadata.num_heads > 0 {
+                self.metadata.hidden_size / self.metadata.num_heads
             } else {
-                if self.metadata.num_heads > 0 {
-                    self.metadata.hidden_size / self.metadata.num_heads
-                } else {
-                    128 // Safe fallback
-                }
+                128 // Safe fallback
             },
         })
     }
@@ -493,8 +862,8 @@ impl GgufLoader {
                     let element_size = match array_type {
                         0 | 1 | 7 => 1,  // UINT8, INT8, BOOL
                         2 | 3 => 2,      // UINT16, INT16
-                        4 | 5 | 6 => 4,  // UINT32, INT32, FLOAT32
-                        10 | 11 | 12 => 8,  // UINT64, INT64, FLOAT64
+                        4..=6 => 4,  // UINT32, INT32, FLOAT32
+                        10..=12 => 8,  // UINT64, INT64, FLOAT64
                         _ => {
                             eprintln!("Warning: Unknown array type {}, stopping metadata parse for key '{}'", array_type, key);
                             return Ok(());
@@ -631,7 +1000,7 @@ impl GgufLoader {
             let tensor = GgufTensor {
                 name: name.clone(),
                 shape,
-                tensor_type: tensor_type.clone(),
+                tensor_type,
                 quant_type: tensor_type.to_string().to_string(),
                 offset,
                 data: Vec::new(), // Will be filled later
@@ -736,7 +1105,7 @@ impl GgufLoader {
                     .chunks_exact(2)
                     .map(|chunk| {
                         let bits = u16::from_le_bytes([chunk[0], chunk[1]]);
-                        f16::from_bits(bits).to_f32()
+                        F16::from_bits(bits).to_f32()
                     })
                     .collect();
 
@@ -755,9 +1124,35 @@ impl GgufLoader {
                 DeviceTensor::from_host_vec(backend, f32_data, tensor.shape.clone())
                     .map_err(|e| anyhow!("Failed to upload Q4_0 tensor: {}", e))
             }
-            GgufTensorType::Q4_1 | GgufTensorType::Q5_0 | GgufTensorType::Q5_1 => {
-                // TODO: Implement dequantization for these types
-                return Err(anyhow!("Unsupported tensor type for GPU upload: {:?}", tensor.tensor_type));
+            GgufTensorType::Q4_1 => {
+                // Dequantize Q4_1 to FP32
+                let f32_data = self.dequantize_q4_1(tensor)?;
+                DeviceTensor::from_host_vec(backend, f32_data, tensor.shape.clone())
+                    .map_err(|e| anyhow!("Failed to upload Q4_1 tensor: {}", e))
+            }
+            GgufTensorType::Q5_0 => {
+                // Dequantize Q5_0 to FP32
+                let f32_data = self.dequantize_q5_0(tensor)?;
+                DeviceTensor::from_host_vec(backend, f32_data, tensor.shape.clone())
+                    .map_err(|e| anyhow!("Failed to upload Q5_0 tensor: {}", e))
+            }
+            GgufTensorType::Q5_1 => {
+                // Dequantize Q5_1 to FP32
+                let f32_data = self.dequantize_q5_1(tensor)?;
+                DeviceTensor::from_host_vec(backend, f32_data, tensor.shape.clone())
+                    .map_err(|e| anyhow!("Failed to upload Q5_1 tensor: {}", e))
+            }
+            GgufTensorType::Mxfp4 => {
+                // Dequantize MXFP4 to FP32
+                let f32_data = self.dequantize_mxfp4(tensor)?;
+                DeviceTensor::from_host_vec(backend, f32_data, tensor.shape.clone())
+                    .map_err(|e| anyhow!("Failed to upload MXFP4 tensor: {}", e))
+            }
+            GgufTensorType::Mxfp6E2m3 | GgufTensorType::Mxfp6E3m2 => {
+                // Dequantize MXFP6 to FP32
+                let f32_data = self.dequantize_mxfp6(tensor)?;
+                DeviceTensor::from_host_vec(backend, f32_data, tensor.shape.clone())
+                    .map_err(|e| anyhow!("Failed to upload MXFP6 tensor: {}", e))
             }
         }
     }
@@ -766,7 +1161,7 @@ impl GgufLoader {
     fn dequantize_q8_0(&self, tensor: &GgufTensor) -> Result<Vec<f32>> {
         let total_elements = tensor.total_elements();
         let mut result = vec![0.0f32; total_elements];
-        let blocks = (total_elements + 31) / 32;
+        let blocks = total_elements.div_ceil(32);
 
         for block_idx in 0..blocks {
             let block_start = block_idx * (4 + 32); // scale (4) + quants (32)
@@ -805,7 +1200,7 @@ impl GgufLoader {
     fn dequantize_q4_0(&self, tensor: &GgufTensor) -> Result<Vec<f32>> {
         let total_elements = tensor.total_elements();
         let mut result = vec![0.0f32; total_elements];
-        let blocks = (total_elements + 31) / 32;
+        let blocks = total_elements.div_ceil(32);
 
         for block_idx in 0..blocks {
             let block_start = block_idx * (4 + 16); // scale (4) + quants (16 bytes for 32 values)
@@ -846,13 +1241,298 @@ impl GgufLoader {
 
         Ok(result)
     }
+
+    /// Dequantize Q4_1 tensor to FP32
+    /// Format: 32 values per block, scale (4 bytes) + min (4 bytes) + 16 bytes of 4-bit packed values
+    fn dequantize_q4_1(&self, tensor: &GgufTensor) -> Result<Vec<f32>> {
+        let total_elements = tensor.total_elements();
+        let mut result = vec![0.0f32; total_elements];
+        let blocks = total_elements.div_ceil(32);
+
+        for block_idx in 0..blocks {
+            let block_start = block_idx * (4 + 4 + 16); // scale (4) + min (4) + quants (16)
+
+            if block_start + 8 > tensor.data.len() {
+                break;
+            }
+
+            // Read scale
+            let scale_bytes = &tensor.data[block_start..block_start + 4];
+            let scale = f32::from_le_bytes([
+                scale_bytes[0],
+                scale_bytes[1],
+                scale_bytes[2],
+                scale_bytes[3],
+            ]);
+
+            // Read min
+            let min_bytes = &tensor.data[block_start + 4..block_start + 8];
+            let min = f32::from_le_bytes([
+                min_bytes[0],
+                min_bytes[1],
+                min_bytes[2],
+                min_bytes[3],
+            ]);
+
+            // Read quantized values (4-bit packed)
+            let quant_start = block_start + 8;
+            let quant_end = std::cmp::min(quant_start + 16, tensor.data.len());
+            let packed_quants = &tensor.data[quant_start..quant_end];
+
+            // Dequantize (unpack 4-bit values)
+            for (i, &packed) in packed_quants.iter().enumerate() {
+                for j in 0..2 {
+                    let element_idx = block_idx * 32 + i * 2 + j;
+                    if element_idx < total_elements {
+                        let quant = if j == 0 {
+                            packed & 0x0F
+                        } else {
+                            (packed >> 4) & 0x0F
+                        };
+                        result[element_idx] = min + (quant as f32) * scale;
+                    }
+                }
+            }
+        }
+
+        Ok(result)
+    }
+
+    /// Dequantize Q5_0 tensor to FP32
+    /// Format: 32 values per block, scale (4 bytes) + qh (4 bytes) + 20 bytes of 4-bit packed values
+    /// qh contains the high bit for each of the 32 values
+    fn dequantize_q5_0(&self, tensor: &GgufTensor) -> Result<Vec<f32>> {
+        let total_elements = tensor.total_elements();
+        let mut result = vec![0.0f32; total_elements];
+        let blocks = total_elements.div_ceil(32);
+
+        for block_idx in 0..blocks {
+            let block_start = block_idx * (4 + 4 + 20); // scale (4) + qh (4) + quants (20)
+
+            if block_start + 8 > tensor.data.len() {
+                break;
+            }
+
+            // Read scale
+            let scale_bytes = &tensor.data[block_start..block_start + 4];
+            let scale = f32::from_le_bytes([
+                scale_bytes[0],
+                scale_bytes[1],
+                scale_bytes[2],
+                scale_bytes[3],
+            ]);
+
+            // Read high bits (qh)
+            let qh_bytes = &tensor.data[block_start + 4..block_start + 8];
+            let qh = u32::from_le_bytes([
+                qh_bytes[0],
+                qh_bytes[1],
+                qh_bytes[2],
+                qh_bytes[3],
+            ]);
+
+            // Read quantized values (4-bit packed)
+            let quant_start = block_start + 8;
+            let quant_end = std::cmp::min(quant_start + 20, tensor.data.len());
+            let packed_quants = &tensor.data[quant_start..quant_end];
+
+            // Dequantize (5-bit values: 4 low bits from packed, 1 high bit from qh)
+            for (i, &packed) in packed_quants.iter().enumerate() {
+                for j in 0..2 {
+                    let element_idx = block_idx * 32 + i * 2 + j;
+                    if element_idx < total_elements {
+                        let bit_idx = i * 2 + j;
+                        let low_bits = if j == 0 {
+                            packed & 0x0F
+                        } else {
+                            (packed >> 4) & 0x0F
+                        };
+                        let high_bit = if bit_idx < 32 {
+                            (qh >> bit_idx) & 1
+                        } else {
+                            0
+                        };
+                        let quant = (low_bits as u32 | (high_bit << 4)) as u8;
+                        result[element_idx] = (quant as f32 - 16.0) * scale;
+                    }
+                }
+            }
+        }
+
+        Ok(result)
+    }
+
+    /// Dequantize Q5_1 tensor to FP32
+    /// Format: 32 values per block, scale (4 bytes) + min (4 bytes) + qh (4 bytes) + 20 bytes of 4-bit packed values
+    fn dequantize_q5_1(&self, tensor: &GgufTensor) -> Result<Vec<f32>> {
+        let total_elements = tensor.total_elements();
+        let mut result = vec![0.0f32; total_elements];
+        let blocks = total_elements.div_ceil(32);
+
+        for block_idx in 0..blocks {
+            let block_start = block_idx * (4 + 4 + 4 + 20); // scale (4) + min (4) + qh (4) + quants (20)
+
+            if block_start + 12 > tensor.data.len() {
+                break;
+            }
+
+            // Read scale
+            let scale_bytes = &tensor.data[block_start..block_start + 4];
+            let scale = f32::from_le_bytes([
+                scale_bytes[0],
+                scale_bytes[1],
+                scale_bytes[2],
+                scale_bytes[3],
+            ]);
+
+            // Read min
+            let min_bytes = &tensor.data[block_start + 4..block_start + 8];
+            let min = f32::from_le_bytes([
+                min_bytes[0],
+                min_bytes[1],
+                min_bytes[2],
+                min_bytes[3],
+            ]);
+
+            // Read high bits (qh)
+            let qh_bytes = &tensor.data[block_start + 8..block_start + 12];
+            let qh = u32::from_le_bytes([
+                qh_bytes[0],
+                qh_bytes[1],
+                qh_bytes[2],
+                qh_bytes[3],
+            ]);
+
+            // Read quantized values (4-bit packed)
+            let quant_start = block_start + 12;
+            let quant_end = std::cmp::min(quant_start + 20, tensor.data.len());
+            let packed_quants = &tensor.data[quant_start..quant_end];
+
+            // Dequantize (5-bit values: 4 low bits from packed, 1 high bit from qh)
+            for (i, &packed) in packed_quants.iter().enumerate() {
+                for j in 0..2 {
+                    let element_idx = block_idx * 32 + i * 2 + j;
+                    if element_idx < total_elements {
+                        let bit_idx = i * 2 + j;
+                        let low_bits = if j == 0 {
+                            packed & 0x0F
+                        } else {
+                            (packed >> 4) & 0x0F
+                        };
+                        let high_bit = if bit_idx < 32 {
+                            (qh >> bit_idx) & 1
+                        } else {
+                            0
+                        };
+                        let quant = (low_bits as u32 | (high_bit << 4)) as u8;
+                        result[element_idx] = min + (quant as f32) * scale;
+                    }
+                }
+            }
+        }
+
+        Ok(result)
+    }
+
+    /// Dequantize MXFP4 tensor to FP32
+    fn dequantize_mxfp4(&self, tensor: &GgufTensor) -> Result<Vec<f32>> {
+        let total_elements = tensor.total_elements();
+        let mut result = vec![0.0f32; total_elements];
+        let blocks = total_elements.div_ceil(32);
+
+        for block_idx in 0..blocks {
+            let block_start = block_idx * 17; // 1 scale byte + 16 data bytes
+
+            if block_start + 1 > tensor.data.len() {
+                break;
+            }
+
+            // Read scale (E8M0)
+            let scale_exp = tensor.data[block_start] as i8;
+            let scale = 2.0_f32.powi(scale_exp as i32);
+
+            // Read MXFP4 elements (4-bit packed)
+            let data_start = block_start + 1;
+            let data_end = std::cmp::min(data_start + 16, tensor.data.len());
+
+            for (byte_offset, &packed) in tensor.data[data_start..data_end].iter().enumerate() {
+                for j in 0..2 {
+                    let element_idx = block_idx * 32 + byte_offset * 2 + j;
+                    if element_idx < total_elements {
+                        let e2m1_bits = if j == 0 {
+                            (packed >> 4) & 0x0F
+                        } else {
+                            packed & 0x0F
+                        };
+
+                        // Decode E2M1
+                        let decoded = MxfpBlock::decode_e2m1(e2m1_bits);
+                        let mut val = scale * decoded;
+                        val = val.clamp(-8.0, 8.0); // MXFP4 range per OCP MX Spec v1.0
+                        result[element_idx] = val;
+                    }
+                }
+            }
+        }
+
+        Ok(result)
+    }
+
+    /// Dequantize MXFP6 tensor to FP32
+    fn dequantize_mxfp6(&self, tensor: &GgufTensor) -> Result<Vec<f32>> {
+        let total_elements = tensor.total_elements();
+        let mut result = vec![0.0f32; total_elements];
+        let blocks = total_elements.div_ceil(32);
+
+        for block_idx in 0..blocks {
+            let block_start = block_idx * 25; // 1 scale byte + 24 data bytes
+
+            if block_start + 1 > tensor.data.len() {
+                break;
+            }
+
+            // Read scale (E8M0)
+            let scale_exp = tensor.data[block_start] as i8;
+            let scale = 2.0_f32.powi(scale_exp as i32);
+
+            // Read MXFP6 elements (6-bit packed)
+            let data_start = block_start + 1;
+            let data_end = std::cmp::min(data_start + 24, tensor.data.len());
+            let packed_data = &tensor.data[data_start..data_end];
+
+            // Unpack 6-bit values
+            for i in 0..32 {
+                let element_idx = block_idx * 32 + i;
+                if element_idx >= total_elements {
+                    break;
+                }
+
+                // Extract 6-bit value
+                let bit_offset = (i * 6) % 8;
+                let byte_idx = (i * 6) / 8;
+
+                if byte_idx + 1 < packed_data.len() {
+                    let combined = ((packed_data[byte_idx + 1] as u16) << 8) | (packed_data[byte_idx] as u16);
+                    let e2m3_bits = ((combined >> (10 - bit_offset)) & 0x3F) as u8;
+
+                    // Decode E2M3
+                    let decoded = MxfpBlock::decode_e2m3(e2m3_bits);
+                    let mut val = scale * decoded;
+                    val = val.clamp(-7.5, 7.5); // MXFP6 range
+                    result[element_idx] = val;
+                }
+            }
+        }
+
+        Ok(result)
+    }
 }
 
 /// Simple f16 implementation for conversion
 #[allow(dead_code)]
-struct f16(u16);
+struct F16(u16);
 
-impl f16 {
+impl F16 {
     fn from_bits(bits: u16) -> Self {
         Self(bits)
     }
@@ -875,6 +1555,11 @@ impl f16 {
         }
     }
 }
+
+/// Include MXFP tests
+#[cfg(test)]
+#[path = "mxfp_tests.rs"]
+mod mxfp_tests;
 
 /// GGUF Specification Regression Tests
 ///
@@ -995,7 +1680,16 @@ mod gguf_spec_tests {
         use std::path::Path;
 
         let model_path = "~/.config/syncore/models/qwen2.5-0.5b.gguf";
-        let model_path = shellexpand::tilde(model_path);
+        // Manual tilde expansion
+        let model_path = if model_path.starts_with("~/") {
+            if let Some(home) = std::env::var("HOME").ok() {
+                model_path.replacen("~", &home, 1)
+            } else {
+                model_path.to_string()
+            }
+        } else {
+            model_path.to_string()
+        };
 
         if !Path::new(&model_path).exists() {
             eprintln!("Skipping test: model not found at {}", model_path);

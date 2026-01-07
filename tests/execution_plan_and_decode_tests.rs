@@ -13,66 +13,8 @@ use rocmforge::model::{
 };
 use std::sync::Arc;
 
-/// Test (A): ExecutionPlan construction
-///
-/// Verifies that ExecutionPlan contains correct number of layers,
-/// encodes QKV projection weights correctly, and encodes attention + MLP operation order.
-#[test]
-fn test_execution_plan_construction() {
-    // Create a simple 2-layer model config
-    let config = ModelConfig::new(
-        2,     // num_hidden_layers
-        8,     // num_attention_heads
-        64,    // head_dim
-        512,   // hidden_size
-        128,   // max_position_embeddings
-        2048,  // intermediate_size
-        32000, // vocab_size
-        ModelType::Llama,
-    );
-
-    // Create backend
-    let backend = HipBackend::new().expect("Failed to create backend");
-
-    // Create execution plan
-    let plan = ExecutionPlan::new(&backend, &config).expect("Failed to create execution plan");
-
-    // Verify plan structure
-    assert_eq!(plan.layers().len(), 2, "Plan should have 2 layers");
-
-    for (i, layer) in plan.layers().iter().enumerate() {
-        // Verify all required tensors are present
-        assert!(
-            layer.qkv_weight.size() > 0,
-            "Layer {} missing QKV weight",
-            i
-        );
-        assert!(layer.o_proj.size() > 0, "Layer {} missing O projection", i);
-        assert!(layer.mlp_fc1.size() > 0, "Layer {} missing MLP FC1", i);
-        assert!(layer.mlp_fc2.size() > 0, "Layer {} missing MLP FC2", i);
-        assert!(
-            layer.norm1_weight.size() > 0,
-            "Layer {} missing norm1 weight",
-            i
-        );
-        assert!(
-            layer.norm2_weight.size() > 0,
-            "Layer {} missing norm2 weight",
-            i
-        );
-
-        // Verify tensor shapes match config
-        let qkv_shape = layer.qkv_weight.shape();
-        assert_eq!(
-            qkv_shape.dims(),
-            &[3 * 512, 512],
-            "QKV weight shape mismatch"
-        );
-
-        let o_shape = layer.o_proj.shape();
-        assert_eq!(o_shape.dims(), &[512, 512], "O projection shape mismatch");
-    }
-}
+// REMOVED: Duplicate test_execution_plan_construction
+// This test is already in execution_plan_construction_tests.rs:14
 
 /// Test (B): Fused QKV correctness (CPU reference)
 ///

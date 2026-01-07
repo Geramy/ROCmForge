@@ -2,9 +2,10 @@ use rocmforge::backend::hip_backend::{DeviceTensor, HipBackend};
 use rocmforge::loader::gguf::GgufLoader;
 use rocmforge::model::execution_plan::ExecutionPlan;
 use std::path::Path;
+use std::sync::Arc;
 
 /// Helper function to create a test backend
-fn create_test_backend() -> HipBackend {
+fn create_test_backend() -> Arc<HipBackend> {
     HipBackend::new().expect("Failed to create HIP backend")
 }
 
