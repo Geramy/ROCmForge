@@ -622,11 +622,28 @@ impl GgufLoader {
             }
         };
 
+        // Determine intermediate_size: metadata, inference, or default
+        let intermediate_size = if self.metadata.intermediate_size > 0 {
+            // Metadata has explicit intermediate_size
+            self.metadata.intermediate_size
+        } else {
+            // Try to infer from tensor shapes (MLP gate weights)
+            match self.infer_intermediate_size_from_tensors() {
+                Some(inferred) => inferred,
+                None => {
+                    // Last resort: use 4x hidden_size (common FFN expansion ratio)
+                    let default = self.metadata.hidden_size * 4;
+                    eprintln!("GGUF: Using default intermediate_size={} (4x hidden_size) for '{}'", default, self.metadata.architecture);
+                    default
+                }
+            }
+        };
+
         Ok(ModelConfig {
             num_hidden_layers: self.metadata.num_layers,
             num_attention_heads: self.metadata.num_heads,
             hidden_size: self.metadata.hidden_size,
-            intermediate_size: self.metadata.intermediate_size,
+            intermediate_size,
             max_position_embeddings: self.metadata.max_position_embeddings,
             vocab_size,
             rms_norm_eps: self.metadata.rms_norm_eps,
@@ -1077,6 +1094,61 @@ impl GgufLoader {
 
         // No suitable tensor found
         eprintln!("GGUF: Could not infer vocab_size from tensor shapes");
+        None
+    }
+
+    /// Infer intermediate_size from MLP layer tensor shapes.
+    ///
+    /// This is used when the GGUF metadata doesn't contain explicit intermediate_size.
+    /// We look at the first layer's gate/up projection weights to infer the dimension.
+    ///
+    /// # Returns
+    ///
+    /// * `Some(usize)` - Inferred intermediate_size
+    /// * `None` - Could not infer (no suitable tensor found)
+    fn infer_intermediate_size_from_tensors(&self) -> Option<usize> {
+        // Common tensor naming patterns for MLP gate weights
+        let tensor_variants = [
+            "blk.0.ffn_gate.weight",      // Qwen2-style
+            "blk.0.ffn_up.weight",        // Qwen2-style (up projection has same shape)
+            "model.layers.0.mlp.gate_proj.weight",  // LLaMA/Mistral-style
+            "layers.0.mlp.gate_proj.weight",        // Alternative
+            "transformer.layers.0.mlp.gate_proj.weight",  // GPT-style
+        ];
+
+        for name in &tensor_variants {
+            if let Some(tensor) = self.tensors.get(*name) {
+                let dims = tensor.shape.dims();
+
+                // Need at least 2 dimensions
+                if dims.len() >= 2 {
+                    let (d0, d1) = (dims[0], dims[1]);
+                    let hidden = self.metadata.hidden_size;
+
+                    if hidden > 0 {
+                        // We know hidden_size, use it to find the intermediate dimension
+                        // Gate weight shape is either [hidden_size, intermediate_size] or
+                        // [intermediate_size, hidden_size]
+                        if d0 == hidden && d1 != hidden {
+                            eprintln!("GGUF: Auto-detected intermediate_size={} from {} tensor shape", d1, name);
+                            return Some(d1);
+                        } else if d1 == hidden && d0 != hidden {
+                            eprintln!("GGUF: Auto-detected intermediate_size={} from {} tensor shape", d0, name);
+                            return Some(d0);
+                        }
+                    } else {
+                        // hidden_size unknown, use heuristic: larger dimension is likely intermediate_size
+                        // (FFN expansion is typically 4x hidden_size)
+                        let inferred = d0.max(d1);
+                        eprintln!("GGUF: Auto-detected intermediate_size={} from {} (heuristic)", inferred, name);
+                        return Some(inferred);
+                    }
+                }
+            }
+        }
+
+        // No suitable tensor found
+        eprintln!("GGUF: Warning - could not auto-detect intermediate_size from tensor shapes");
         None
     }
 

@@ -650,7 +650,7 @@ extern "C" __global__ void attention_softmax(float* scores, int rows, int cols) 
     if (row >= rows) return;
     extern __shared__ float shared[];
     int tid = threadIdx.x;
-    float max_val = -INFINITY;
+    float max_val = -3.402823466e+38f;  // -FLT_MAX, largest negative finite float
     for (int col = tid; col < cols; col += blockDim.x) {
         float val = scores[row * cols + col];
         if (val > max_val) {
