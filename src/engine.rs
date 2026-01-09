@@ -443,26 +443,25 @@ impl InferenceEngine {
     }
 
     async fn process_batch(&self) -> EngineResult<()> {
-        // Create batch from scheduler
-        let batch = {
+        // Get next iteration batch using continuous batching
+        let iteration_batch = {
             let mut scheduler = self.scheduler.write().await;
             scheduler
-                .create_batch()
+                .get_next_iteration_batch()
                 .map_err(|e| EngineError::SchedulerError(e.to_string()))?
         };
 
-        if batch.is_empty() {
+        if iteration_batch.is_empty() {
             return Ok(());
         }
 
         info!(
-            "Processing batch {} with {} requests",
-            batch.batch_id,
-            batch.size()
+            "Processing iteration batch with {} requests",
+            iteration_batch.size()
         );
 
         // Process each request in the batch while keeping scheduler state in sync
-        let original_requests = batch.requests.clone();
+        let original_requests = iteration_batch.requests.clone();
         let mut refreshed_requests = Vec::with_capacity(original_requests.len());
 
         for request in &original_requests {
@@ -488,12 +487,20 @@ impl InferenceEngine {
             }
         }
 
-        let mut batch = batch;
-        batch.requests = refreshed_requests;
+        // Update the iteration batch with refreshed requests
+        let mut updated_batch = iteration_batch;
+        updated_batch.requests = refreshed_requests;
 
-        // Update scheduler with the refreshed batch
+        // Update scheduler with the refreshed batch using continuous batching
         let mut scheduler = self.scheduler.write().await;
-        let _ = scheduler.update_batch(batch);
+        let _completed = scheduler
+            .update_iteration_batch(updated_batch)
+            .map_err(|e| EngineError::SchedulerError(e.to_string()))?;
+
+        // Notify completed requests
+        for completed_req in _completed {
+            self.notify_request(completed_req.request_id).await;
+        }
 
         Ok(())
     }
@@ -620,9 +627,22 @@ impl InferenceEngine {
             EngineError::InferenceFailed("Failed to compute logits for request".to_string())
         })?;
 
-        logits_tensor
-            .to_host_vec()
-            .map_err(|e| EngineError::InferenceFailed(e.to_string()))
+        // CRITICAL: Use backend.copy_from_device() instead of to_host_vec()
+        //
+        // to_host_vec() calls HipBuffer::copy_to_host() which uses:
+        //   1. hipDeviceSynchronize() - can hang if GPU operations don't complete
+        //   2. hipMemcpy (default stream)
+        //
+        // backend.copy_from_device() uses the correct stream-aware approach:
+        //   1. hipMemcpyAsync with backend's stream
+        //   2. Stream synchronization (not device sync)
+        //
+        // This fix resolves the CLI hang during inference (see CLI_HANG_INVESTIGATION.md)
+        let mut host_data = vec![0.0f32; logits_tensor.len()];
+        backend
+            .copy_from_device(logits_tensor.buffer(), &mut host_data)
+            .map_err(|e| EngineError::InferenceFailed(e.to_string()))?;
+        Ok(host_data)
     }
 
     pub async fn get_engine_stats(&self) -> EngineStats {
