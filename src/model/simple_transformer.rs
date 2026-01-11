@@ -78,7 +78,7 @@ impl Linear {
         let backend = match HipBackend::new() {
             Ok(backend) => backend,
             Err(e) => {
-                eprintln!("Warning: Failed to initialize HIP backend: {}", e);
+                tracing::warn!("Failed to initialize HIP backend: {}", e);
                 return self; // Return self without GPU buffer
             }
         };
@@ -87,15 +87,15 @@ impl Linear {
         let weight_buffer = match backend.allocate_buffer(self.weight.data.len()) {
             Ok(buffer) => {
                 if let Err(e) = buffer.copy_from_host(&self.weight.data) {
-                    eprintln!("Warning: Failed to copy weights to GPU: {}", e);
+                    tracing::warn!("Failed to copy weights to GPU: {}", e);
                     None
                 } else {
                     Some(buffer)
                 }
             }
             Err(e) => {
-                eprintln!(
-                    "Warning: Failed to allocate GPU buffer for linear layer weights: {}",
+                tracing::warn!(
+                    "Failed to allocate GPU buffer for linear layer weights: {}",
                     e
                 );
                 None
@@ -160,7 +160,7 @@ impl Linear {
 
         // Debug logging for GPU usage (gated by debug assertions)
         #[cfg(debug_assertions)]
-        eprintln!("GPU: Using GPU-accelerated linear layer forward");
+        tracing::debug!("Using GPU-accelerated linear layer forward");
 
         // Host → Device: Copy input to GPU
         let input_buffer = HipBuffer::new(input.len())
@@ -328,7 +328,7 @@ impl SimpleAttention {
 
         // Debug logging for GPU usage (gated by debug assertions)
         #[cfg(debug_assertions)]
-        eprintln!("GPU: Using GPU-accelerated attention (fallback to CPU for now)");
+        tracing::debug!("Using GPU-accelerated attention (fallback to CPU for now)");
 
         // For now, fall back to CPU implementation for attention
         // In a full implementation, this would use GPU attention kernels

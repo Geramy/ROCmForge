@@ -255,7 +255,7 @@ impl Rope {
 
         // Create backend for kernel execution
         let backend = HipBackend::new().map_err(|e| {
-            AttentionError::DimensionError(format!("Failed to create HIP backend: {}", e))
+            AttentionError::HandleCreation(format!("Failed to create HIP backend: {}", e))
         })?;
 
         // Upload cos/sin to GPU for the positions we need
@@ -285,12 +285,12 @@ impl Rope {
         // Create cos/sin device tensors
         let cos_shape = TensorShape::from_dims(&[seq_len, half_dim]);
         let cos_device = DeviceTensor::from_host_vec(&backend, cos_gpu, cos_shape).map_err(|e| {
-            AttentionError::DimensionError(format!("Failed to allocate cos tensor: {}", e))
+            AttentionError::MemoryAllocation(format!("Failed to allocate cos tensor: {}", e))
         })?;
 
         let sin_shape = TensorShape::from_dims(&[seq_len, half_dim]);
         let sin_device = DeviceTensor::from_host_vec(&backend, sin_gpu, sin_shape).map_err(|e| {
-            AttentionError::DimensionError(format!("Failed to allocate sin tensor: {}", e))
+            AttentionError::MemoryAllocation(format!("Failed to allocate sin tensor: {}", e))
         })?;
 
         // Get device pointers
@@ -311,14 +311,14 @@ impl Rope {
         };
 
         if result != 0 {
-            return Err(AttentionError::DimensionError(
+            return Err(AttentionError::GpuOperation(
                 "GPU kernel execution failed".to_string()
             ));
         }
 
         // Synchronize to ensure kernel completes
         backend.synchronize().map_err(|e| {
-            AttentionError::DimensionError(format!("GPU synchronization failed: {}", e))
+            AttentionError::Synchronization(format!("GPU synchronization failed: {}", e))
         })?;
 
         Ok(())

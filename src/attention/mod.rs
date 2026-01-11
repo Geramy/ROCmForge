@@ -2,6 +2,7 @@
 //! Implements Scaled Dot-Product Attention
 
 pub mod backend;
+pub mod backend_registry;
 pub mod compare;
 pub mod compute;
 pub mod cpu;
@@ -60,6 +61,17 @@ mod flash_causal_tests;
 #[cfg(feature = "rocm")]
 use crate::backend::{DeviceTensor, HipBackend};
 pub use backend::AttentionBackend;
+// Re-export backend registry types for public API
+// Note: The pluggable backend trait is now named BackendImplementation
+// to distinguish it from the AttentionBackend enum used for simple selection
+pub use backend_registry::{
+    AttentionBackendRegistry,
+    AttentionBackendError,
+    AttentionBackendResult,
+    AttentionConfig,
+    KvCacheLayout,
+    BackendImplementation,
+};
 use thiserror::Error;
 
 #[derive(Error, Debug)]
@@ -68,6 +80,16 @@ pub enum AttentionError {
     ShapeMismatch(String),
     #[error("Dimension error: {0}")]
     DimensionError(String),
+    #[error("GPU memory allocation failed: {0}")]
+    MemoryAllocation(String),
+    #[error("GPU memory copy failed: {0}")]
+    MemoryCopy(String),
+    #[error("GPU operation failed: {0}")]
+    GpuOperation(String),
+    #[error("Handle/resource creation failed: {0}")]
+    HandleCreation(String),
+    #[error("GPU synchronization failed: {0}")]
+    Synchronization(String),
 }
 
 pub type AttentionResult<T> = Result<T, AttentionError>;

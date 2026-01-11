@@ -372,6 +372,11 @@ pub enum GgufTensorType {
     Q5_0 = 6,  // GGML_TYPE_Q5_0
     Q5_1 = 7,  // GGML_TYPE_Q5_1
     Q8_0 = 8,  // GGML_TYPE_Q8_0
+    Q2_K = 10, // GGML_TYPE_Q2_K (K-quants)
+    Q3_K = 11, // GGML_TYPE_Q3_K
+    Q4_K = 12, // GGML_TYPE_Q4_K
+    Q5_K = 13, // GGML_TYPE_Q5_K
+    Q6_K = 14, // GGML_TYPE_Q6_K
 
     // MXFP types (OCP MX Specification v1.0)
     // Using enum values 20-22 to avoid conflicts with future ggml types
@@ -390,6 +395,11 @@ impl GgufTensorType {
             6 => Ok(GgufTensorType::Q5_0),
             7 => Ok(GgufTensorType::Q5_1),
             8 => Ok(GgufTensorType::Q8_0),
+            10 => Ok(GgufTensorType::Q2_K),
+            11 => Ok(GgufTensorType::Q3_K),
+            12 => Ok(GgufTensorType::Q4_K),
+            13 => Ok(GgufTensorType::Q5_K),
+            14 => Ok(GgufTensorType::Q6_K),
             20 => Ok(GgufTensorType::Mxfp4),
             21 => Ok(GgufTensorType::Mxfp6E2m3),
             22 => Ok(GgufTensorType::Mxfp6E3m2),
@@ -406,6 +416,11 @@ impl GgufTensorType {
             GgufTensorType::Q5_0 => "Q5_0",
             GgufTensorType::Q5_1 => "Q5_1",
             GgufTensorType::Q8_0 => "Q8_0",
+            GgufTensorType::Q2_K => "Q2_K",
+            GgufTensorType::Q3_K => "Q3_K",
+            GgufTensorType::Q4_K => "Q4_K",
+            GgufTensorType::Q5_K => "Q5_K",
+            GgufTensorType::Q6_K => "Q6_K",
             GgufTensorType::Mxfp4 => "MXFP4",
             GgufTensorType::Mxfp6E2m3 => "MXFP6_E2M3",
             GgufTensorType::Mxfp6E3m2 => "MXFP6_E3M2",
@@ -435,6 +450,26 @@ impl GgufTensorType {
             GgufTensorType::Q8_0 => {
                 // Q8_0: block_size=32, each block has 1 scale (f32) + 32 quants (u8)
                 32
+            }
+            GgufTensorType::Q2_K => {
+                // Q2_K: block_size=256, uses super-block structure
+                256
+            }
+            GgufTensorType::Q3_K => {
+                // Q3_K: block_size=256
+                256
+            }
+            GgufTensorType::Q4_K => {
+                // Q4_K: block_size=256
+                256
+            }
+            GgufTensorType::Q5_K => {
+                // Q5_K: block_size=256
+                256
+            }
+            GgufTensorType::Q6_K => {
+                // Q6_K: block_size=256
+                256
             }
             GgufTensorType::Mxfp4 | GgufTensorType::Mxfp6E2m3 | GgufTensorType::Mxfp6E3m2 => {
                 // MXFP formats: block_size=32
@@ -501,42 +536,56 @@ impl GgufTensor {
     /// Calculate data size in bytes
     pub fn data_size(&self) -> usize {
         match self.tensor_type {
-            GgufTensorType::F32 => self.total_elements() * 4,
-            GgufTensorType::F16 => self.total_elements() * 2,
+            GgufTensorType::F32 => {
+                self.total_elements()
+                    .checked_mul(4)
+                    .unwrap_or(usize::MAX)
+            }
+            GgufTensorType::F16 => {
+                self.total_elements()
+                    .checked_mul(2)
+                    .unwrap_or(usize::MAX)
+            }
             GgufTensorType::Q4_0 => {
                 // Q4_0: block_size=32, each block has 1 scale (f32) + 32 quants (u8)
                 let blocks = self.total_elements().div_ceil(32);
-                blocks * (4 + 32)
+                blocks.checked_mul(4 + 32).unwrap_or(usize::MAX)
             }
             GgufTensorType::Q4_1 => {
                 // Q4_1: similar structure to Q4_0
                 let blocks = self.total_elements().div_ceil(32);
-                blocks * (4 + 32)
+                blocks.checked_mul(4 + 32).unwrap_or(usize::MAX)
             }
             GgufTensorType::Q5_0 => {
                 // Q5_0: block_size=32
                 let blocks = self.total_elements().div_ceil(32);
-                blocks * (4 + 32)
+                blocks.checked_mul(4 + 32).unwrap_or(usize::MAX)
             }
             GgufTensorType::Q5_1 => {
                 // Q5_1: block_size=32
                 let blocks = self.total_elements().div_ceil(32);
-                blocks * (4 + 32)
+                blocks.checked_mul(4 + 32).unwrap_or(usize::MAX)
             }
             GgufTensorType::Q8_0 => {
                 // Q8_0: block_size=32, each block has 1 scale (f32) + 32 quants (u8)
                 let blocks = self.total_elements().div_ceil(32);
-                blocks * (4 + 32)
+                blocks.checked_mul(4 + 32).unwrap_or(usize::MAX)
+            }
+            GgufTensorType::Q2_K | GgufTensorType::Q3_K | GgufTensorType::Q4_K |
+            GgufTensorType::Q5_K | GgufTensorType::Q6_K => {
+                // K-quants: block_size=256 bytes
+                let blocks = self.total_elements().div_ceil(256); // Approximate block count
+                blocks.checked_mul(256).unwrap_or(usize::MAX)
             }
             GgufTensorType::Mxfp4 => {
                 // MXFP4: block_size=32, each block has 1 scale (E8M0) + 32*4 bits data
                 let blocks = self.total_elements().div_ceil(32);
-                blocks * (1 + 16) // 1 byte scale + 16 bytes data
+                blocks.checked_mul(1 + 16).unwrap_or(usize::MAX) // 1 byte scale + 16 bytes data
             }
             GgufTensorType::Mxfp6E2m3 | GgufTensorType::Mxfp6E3m2 => {
                 // MXFP6: block_size=32, each block has 1 scale (E8M0) + 32*6 bits data
                 let blocks = self.total_elements().div_ceil(32);
-                blocks * (1 + 24) // 1 byte scale + 24 bytes data
+                blocks.checked_mul(1 + 24).unwrap_or(usize::MAX) // 1 byte scale + 24 bytes data
             }
         }
     }
@@ -635,18 +684,23 @@ impl GgufLoader {
         let mut tensor_list: Vec<(String, usize)> = Vec::new();
         for (name, tensor) in &self.tensors {
             let num_elements = tensor.shape.total_elements();
-            let tensor_bytes = num_elements * std::mem::size_of::<f32>();
+            let tensor_bytes = num_elements
+                .checked_mul(std::mem::size_of::<f32>())
+                .ok_or_else(|| anyhow!(
+                    "Integer overflow: tensor '{}' size calculation (elements={}, element_size=4)",
+                    name, num_elements
+                ))?;
             tensor_list.push((name.clone(), tensor_bytes));
         }
 
         let total_bytes: usize = tensor_list.iter().map(|(_, size)| size).sum();
-        eprintln!("DEBUG: Batched memory pooling - total: {} bytes ({:.2} MB), tensors: {}",
+        tracing::debug!("Batched memory pooling - total: {} bytes ({:.2} MB), tensors: {}",
                   total_bytes, total_bytes as f64 / 1024.0 / 1024.0, tensor_list.len());
 
         // Find max tensor size to ensure pool is large enough
         let max_tensor_size = tensor_list.iter().map(|(_, size)| *size).max().unwrap_or(0);
         let actual_pool_size = POOL_SIZE.max(max_tensor_size);
-        eprintln!("DEBUG: Pool size: {} MB (max tensor: {} MB)",
+        tracing::debug!("Pool size: {} MB (max tensor: {} MB)",
                   actual_pool_size / 1024 / 1024, max_tensor_size / 1024 / 1024);
 
         // Create memory pools (account for 4KB alignment padding)
@@ -664,7 +718,7 @@ impl GgufLoader {
                 pools.push(backend.allocate_buffer(actual_pool_size)
                     .map_err(|e| anyhow!("GPU memory pool #{} allocation failed: {}", pools.len() + 1, e))?);
                 current_pool_bytes = 0;
-                eprintln!("DEBUG: Allocated new memory pool #{}", pools.len());
+                tracing::debug!("Allocated new memory pool #{}", pools.len());
             }
             current_pool_bytes += aligned_tensor_bytes;
         }
@@ -673,11 +727,11 @@ impl GgufLoader {
         if current_pool_bytes > 0 {
             pools.push(backend.allocate_buffer(current_pool_bytes)
                 .map_err(|e| anyhow!("GPU memory pool #{} allocation failed (size={}): {}", pools.len() + 1, current_pool_bytes, e))?);
-            eprintln!("DEBUG: Allocated final memory pool #{} (size: {} bytes)",
+            tracing::debug!("Allocated final memory pool #{} (size: {} bytes)",
                       pools.len(), current_pool_bytes);
         }
 
-        eprintln!("DEBUG: Created {} memory pools, total allocation: {} bytes",
+        tracing::debug!("Created {} memory pools, total allocation: {} bytes",
                   pools.len(), pools.iter().map(|p| p.size()).sum::<usize>());
 
         // Upload tensors to their respective pools
@@ -691,7 +745,12 @@ impl GgufLoader {
 
         for (name, tensor) in &self.tensors {
             let num_elements = tensor.shape.total_elements();
-            let tensor_bytes = num_elements * std::mem::size_of::<f32>();
+            let tensor_bytes = num_elements
+                .checked_mul(std::mem::size_of::<f32>())
+                .ok_or_else(|| anyhow!(
+                    "Integer overflow: tensor '{}' size calculation (elements={}, element_size=4)",
+                    name, num_elements
+                ))?;
 
             // Skip memory pooling for:
             // 1. Large tensors (>32 MB)
@@ -706,7 +765,7 @@ impl GgufLoader {
             let is_large = tensor_bytes > LARGE_TENSOR_THRESHOLD;
 
             if is_large || needs_transpose || is_qkv {
-                eprintln!("DEBUG: Skipping memory pool for tensor '{}' ({} MB, large={}, transpose={}, qkv={})",
+                tracing::debug!("Skipping memory pool for tensor '{}' ({} MB, large={}, transpose={}, qkv={})",
                          name, tensor_bytes / 1024 / 1024, is_large, needs_transpose, is_qkv);
                 let device_tensor = DeviceTensor::from_host_vec(
                     backend,
@@ -729,7 +788,9 @@ impl GgufLoader {
                         GgufTensorType::Q4_1 => self.dequantize_q4_1(tensor)?,
                         GgufTensorType::Q5_0 => self.dequantize_q5_0(tensor)?,
                         GgufTensorType::Q5_1 => self.dequantize_q5_1(tensor)?,
-                        _ => return Err(anyhow!("Unsupported tensor type for tensor '{}'", name)),
+                        GgufTensorType::Q4_K => self.dequantize_q4_k(tensor)?,
+                        GgufTensorType::Q6_K => self.dequantize_q6_k(tensor)?,
+                        _ => return Err(anyhow!("Unsupported tensor type {:?} for tensor '{}'", tensor.tensor_type, name)),
                     },
                     tensor.shape.clone(),
                 ).map_err(|e| anyhow!("Failed to create tensor '{}': {}", name, e))?;
@@ -770,17 +831,25 @@ impl GgufLoader {
                 GgufTensorType::Q4_1 => self.dequantize_q4_1(tensor)?,
                 GgufTensorType::Q5_0 => self.dequantize_q5_0(tensor)?,
                 GgufTensorType::Q5_1 => self.dequantize_q5_1(tensor)?,
+                GgufTensorType::Q4_K => self.dequantize_q4_k(tensor)?,
+                GgufTensorType::Q6_K => self.dequantize_q6_k(tensor)?,
                 GgufTensorType::Mxfp4 | GgufTensorType::Mxfp6E2m3 | GgufTensorType::Mxfp6E3m2 => {
                     return Err(anyhow!("MXFP dequantization not implemented in memory-pooled load_to_gpu"));
+                }
+                GgufTensorType::Q2_K | GgufTensorType::Q3_K | GgufTensorType::Q5_K => {
+                    return Err(anyhow!("K-quant type {:?} not yet implemented", tensor.tensor_type));
                 }
             };
 
             // Create device tensor from current pool at current offset
-            let device_tensor = DeviceTensor::from_pool(
+            // Use from_pool_with_backend to ensure data transfers use the same HIP stream
+            // as all other GPU operations, preventing synchronization issues
+            let device_tensor = DeviceTensor::from_pool_with_backend(
                 &pools[pool_idx],
                 offset,
                 f32_data,
                 tensor.shape.clone(),
+                backend,
             ).map_err(|e| anyhow!("GPU memory pool #{} tensor '{}' creation failed: {}", pool_idx, name, e))?;
 
             gpu_tensors.insert(name.clone(), device_tensor);
@@ -802,18 +871,22 @@ impl GgufLoader {
             // This is critical for memory pool sub-buffers
             if pool_idx == 0 && offset > (256 * 1024 * 1024) {
                 // Sync after uploading ~256 MB to first pool (embedding layer)
-                crate::backend::hip_backend::synchronize_device()
-                    .map_err(|e| anyhow!("Sync failed: {}", e))?;
+                // Use backend stream sync instead of device sync for efficiency
+                backend.synchronize()
+                    .map_err(|e| anyhow!("Stream sync failed: {}", e))?;
             }
         }
 
         // Final synchronization after all uploads
-        eprintln!("DEBUG: Synchronizing after all tensor uploads");
-        crate::backend::hip_backend::synchronize_device()
-            .map_err(|e| anyhow!("Final sync failed: {}", e))?;
-        eprintln!("DEBUG: Final sync complete");
+        tracing::debug!("Synchronizing after all tensor uploads");
+        // Use backend stream sync instead of device sync
+        // Since all operations (copies, kernels, hipBLAS) now use the same stream,
+        // we only need to sync this one stream
+        backend.synchronize()
+            .map_err(|e| anyhow!("Final stream sync failed: {}", e))?;
+        tracing::debug!("Final sync complete");
 
-        eprintln!("DEBUG: All {} tensors uploaded to GPU via {} memory pools",
+        tracing::debug!("All {} tensors uploaded to GPU via {} memory pools",
                   gpu_tensors.len(), pools.len());
         Ok(gpu_tensors)
     }
@@ -838,7 +911,7 @@ impl GgufLoader {
                         "glm" => 151552,
                         _ => 32000,
                     };
-                    eprintln!("GGUF: Using default vocab_size={} for '{}'", default, self.metadata.architecture);
+                    tracing::info!("GGUF: Using default vocab_size={} for '{}'", default, self.metadata.architecture);
                     default
                 }
             }
@@ -855,7 +928,7 @@ impl GgufLoader {
                 None => {
                     // Last resort: use 4x hidden_size (common FFN expansion ratio)
                     let default = self.metadata.hidden_size * 4;
-                    eprintln!("GGUF: Using default intermediate_size={} (4x hidden_size) for '{}'", default, self.metadata.architecture);
+                    tracing::info!("GGUF: Using default intermediate_size={} (4x hidden_size) for '{}'", default, self.metadata.architecture);
                     default
                 }
             }
@@ -1067,7 +1140,7 @@ impl GgufLoader {
                             // Average string length ~10 bytes + 8 byte length = 18 bytes
                             let estimated_size = n_elements.saturating_mul(20);
                             if estimated_size > 100_000_000 {
-                                eprintln!("Warning: Very large STRING array '{}', stopping metadata parse", key);
+                                tracing::warn!("Very large STRING array '{}', stopping metadata parse", key);
                                 return Ok(());
                             }
                             // Try to seek past the data
@@ -1104,7 +1177,7 @@ impl GgufLoader {
                         4..=6 => 4,  // UINT32, INT32, FLOAT32
                         10..=12 => 8,  // UINT64, INT64, FLOAT64
                         _ => {
-                            eprintln!("Warning: Unknown array type {}, stopping metadata parse for key '{}'", array_type, key);
+                            tracing::warn!("Unknown array type {}, stopping metadata parse for key '{}'", array_type, key);
                             return Ok(());
                         }
                     };
@@ -1114,7 +1187,7 @@ impl GgufLoader {
                     })?;
 
                     if data_size > 1_000_000_000 {
-                        eprintln!("Warning: Large array ({} bytes) for key '{}', stopping metadata parse", data_size, key);
+                        tracing::warn!("Large array ({} bytes) for key '{}', stopping metadata parse", data_size, key);
                         return Ok(());
                     }
 
@@ -1298,16 +1371,16 @@ impl GgufLoader {
                         // We know hidden_size, use it to disambiguate
                         // Shape is either [vocab_size, hidden_size] or [hidden_size, vocab_size]
                         if d0 == hidden && d1 != hidden {
-                            eprintln!("GGUF: Inferred vocab_size={} from {} shape [{}, {}]", d1, name, d0, d1);
+                            tracing::debug!("GGUF: Inferred vocab_size={} from {} shape [{}, {}]", d1, name, d0, d1);
                             return Some(d1);
                         } else if d1 == hidden && d0 != hidden {
-                            eprintln!("GGUF: Inferred vocab_size={} from {} shape [{}, {}]", d0, name, d0, d1);
+                            tracing::debug!("GGUF: Inferred vocab_size={} from {} shape [{}, {}]", d0, name, d0, d1);
                             return Some(d0);
                         }
                     } else {
                         // hidden_size unknown, use heuristic: larger dimension is likely vocab_size
                         let inferred = d0.max(d1);
-                        eprintln!("GGUF: Inferred vocab_size={} from {} (heuristic, hidden_size unknown)", inferred, name);
+                        tracing::debug!("GGUF: Inferred vocab_size={} from {} (heuristic, hidden_size unknown)", inferred, name);
                         return Some(inferred);
                     }
                 }
@@ -1315,7 +1388,7 @@ impl GgufLoader {
         }
 
         // No suitable tensor found
-        eprintln!("GGUF: Could not infer vocab_size from tensor shapes");
+        tracing::warn!("GGUF: Could not infer vocab_size from tensor shapes");
         None
     }
 
@@ -1352,17 +1425,17 @@ impl GgufLoader {
                         // Gate weight shape is either [hidden_size, intermediate_size] or
                         // [intermediate_size, hidden_size]
                         if d0 == hidden && d1 != hidden {
-                            eprintln!("GGUF: Auto-detected intermediate_size={} from {} tensor shape", d1, name);
+                            tracing::debug!("GGUF: Auto-detected intermediate_size={} from {} tensor shape", d1, name);
                             return Some(d1);
                         } else if d1 == hidden && d0 != hidden {
-                            eprintln!("GGUF: Auto-detected intermediate_size={} from {} tensor shape", d0, name);
+                            tracing::debug!("GGUF: Auto-detected intermediate_size={} from {} tensor shape", d0, name);
                             return Some(d0);
                         }
                     } else {
                         // hidden_size unknown, use heuristic: larger dimension is likely intermediate_size
                         // (FFN expansion is typically 4x hidden_size)
                         let inferred = d0.max(d1);
-                        eprintln!("GGUF: Auto-detected intermediate_size={} from {} (heuristic)", inferred, name);
+                        tracing::debug!("GGUF: Auto-detected intermediate_size={} from {} (heuristic)", inferred, name);
                         return Some(inferred);
                     }
                 }
@@ -1370,7 +1443,7 @@ impl GgufLoader {
         }
 
         // No suitable tensor found
-        eprintln!("GGUF: Warning - could not auto-detect intermediate_size from tensor shapes");
+        tracing::warn!("GGUF: Warning - could not auto-detect intermediate_size from tensor shapes");
         None
     }
 
@@ -1447,6 +1520,25 @@ impl GgufLoader {
                 let f32_data = self.dequantize_mxfp6(tensor)?;
                 DeviceTensor::from_host_vec(backend, f32_data, tensor.shape.clone())
                     .map_err(|e| anyhow!("Failed to upload MXFP6 tensor: {}", e))
+            }
+            GgufTensorType::Q4_K => {
+                // Dequantize Q4_K to FP32
+                let f32_data = self.dequantize_q4_k(tensor)?;
+                DeviceTensor::from_host_vec(backend, f32_data, tensor.shape.clone())
+                    .map_err(|e| anyhow!("Failed to upload Q4_K tensor: {}", e))
+            }
+            GgufTensorType::Q6_K => {
+                // Dequantize Q6_K to FP32
+                let f32_data = self.dequantize_q6_k(tensor)?;
+                DeviceTensor::from_host_vec(backend, f32_data, tensor.shape.clone())
+                    .map_err(|e| anyhow!("Failed to upload Q6_K tensor: {}", e))
+            }
+            GgufTensorType::Q2_K | GgufTensorType::Q3_K | GgufTensorType::Q5_K => {
+                return Err(anyhow!(
+                    "K-quant type {:?} not yet implemented for tensor '{}'",
+                    tensor.tensor_type,
+                    tensor.name
+                ))
             }
         }
     }
@@ -1820,6 +1912,26 @@ impl GgufLoader {
 
         Ok(result)
     }
+
+    /// Stub: Q4_K dequantization (not yet implemented)
+    /// Q4_K uses complex super-block structure with 256-byte blocks
+    fn dequantize_q4_k(&self, tensor: &GgufTensor) -> Result<Vec<f32>> {
+        Err(anyhow!(
+            "Q4_K dequantization not yet implemented. Tensor '{}' uses Q4_K quantization which requires super-block dequantization. \
+             For now, please use a model with Q4_0/Q4_1/Q5_0/Q5_1/Q8_0 quantization instead.",
+            tensor.name
+        ))
+    }
+
+    /// Stub: Q6_K dequantization (not yet implemented)
+    /// Q6_K uses complex block structure with 256-byte blocks
+    fn dequantize_q6_k(&self, tensor: &GgufTensor) -> Result<Vec<f32>> {
+        Err(anyhow!(
+            "Q6_K dequantization not yet implemented. Tensor '{}' uses Q6_K quantization which requires complex block dequantization. \
+             For now, please use a model with Q4_0/Q4_1/Q5_0/Q5_1/Q8_0 quantization instead.",
+            tensor.name
+        ))
+    }
 }
 
 /// Simple f16 implementation for conversion
@@ -1986,7 +2098,7 @@ mod gguf_spec_tests {
         };
 
         if !Path::new(&model_path).exists() {
-            eprintln!("Skipping test: model not found at {}", model_path);
+            tracing::info!("Skipping test: model not found at {}", model_path);
             return;
         }
 

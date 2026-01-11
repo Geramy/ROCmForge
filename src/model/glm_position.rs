@@ -8,7 +8,7 @@ use crate::attention::rope::{Rope, RopeConfig};
 use crate::attention::{AttentionError, AttentionResult};
 
 /// GLM position configuration
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct GlmPositionConfig {
     /// Maximum sequence length
     pub max_seq_len: usize,
@@ -16,16 +16,6 @@ pub struct GlmPositionConfig {
     pub bidirectional: bool,
     /// RoPE configuration (if using rotary embeddings)
     pub rope_config: Option<RopeConfig>,
-}
-
-impl Default for GlmPositionConfig {
-    fn default() -> Self {
-        Self {
-            max_seq_len: 2048,
-            bidirectional: false, // GLM typically uses causal attention
-            rope_config: None,
-        }
-    }
 }
 
 impl GlmPositionConfig {
@@ -49,6 +39,7 @@ impl GlmPositionConfig {
 }
 
 /// GLM position ID handler
+#[derive(Debug, Clone)]
 pub struct GlmPositionHandler {
     config: GlmPositionConfig,
     rope: Option<Rope>,
@@ -284,7 +275,7 @@ impl GlmPositionHandler {
         if let Some(rope) = &self.rope {
             // Create backend for kernel execution
             let backend = HipBackend::new().map_err(|e| {
-                AttentionError::DimensionError(format!("Failed to create HIP backend: {}", e))
+                AttentionError::HandleCreation(format!("Failed to create HIP backend: {}", e))
             })?;
 
             // Upload cos/sin to GPU for the positions we need
@@ -314,12 +305,12 @@ impl GlmPositionHandler {
             // Create cos/sin device tensors
             let cos_shape = TensorShape::from_dims(&[seq_len, half_dim]);
             let cos_device = DeviceTensor::from_host_vec(&backend, cos_gpu, cos_shape).map_err(|e| {
-                AttentionError::DimensionError(format!("Failed to allocate cos tensor: {}", e))
+                AttentionError::MemoryAllocation(format!("Failed to allocate cos tensor: {}", e))
             })?;
 
             let sin_shape = TensorShape::from_dims(&[seq_len, half_dim]);
             let sin_device = DeviceTensor::from_host_vec(&backend, sin_gpu, sin_shape).map_err(|e| {
-                AttentionError::DimensionError(format!("Failed to allocate sin tensor: {}", e))
+                AttentionError::MemoryAllocation(format!("Failed to allocate sin tensor: {}", e))
             })?;
 
             // Get device pointers
@@ -342,14 +333,14 @@ impl GlmPositionHandler {
             };
 
             if result != 0 {
-                return Err(AttentionError::DimensionError(
+                return Err(AttentionError::GpuOperation(
                     "GPU kernel execution failed".to_string()
                 ));
             }
 
             // Synchronize to ensure kernel completes
             backend.synchronize().map_err(|e| {
-                AttentionError::DimensionError(format!("GPU synchronization failed: {}", e))
+                AttentionError::Synchronization(format!("GPU synchronization failed: {}", e))
             })?;
         } else {
             // For GLM without RoPE, we might apply other position encoding schemes

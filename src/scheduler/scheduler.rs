@@ -225,6 +225,59 @@ impl Batch {
     }
 }
 
+/// Represents a single iteration's batch for continuous batching
+/// Allows requests to enter/exit dynamically between iterations
+#[derive(Debug)]
+pub struct IterationBatch {
+    pub requests: Vec<GenerationRequest>,
+    pub sequence_positions: Vec<usize>,
+    pub completed_indices: Vec<usize>,
+}
+
+impl IterationBatch {
+    pub fn new() -> Self {
+        IterationBatch {
+            requests: Vec::new(),
+            sequence_positions: Vec::new(),
+            completed_indices: Vec::new(),
+        }
+    }
+
+    /// Remove completed requests and compact remaining
+    pub fn compact(&mut self) {
+        let mut active_requests = Vec::new();
+        let mut active_positions = Vec::new();
+
+        for (i, req) in self.requests.iter().enumerate() {
+            if !req.is_complete() && req.state != RequestState::Failed {
+                active_requests.push(req.clone());
+                active_positions.push(self.sequence_positions[i]);
+            } else {
+                self.completed_indices.push(i);
+            }
+        }
+
+        self.requests = active_requests;
+        self.sequence_positions = active_positions;
+    }
+
+    pub fn size(&self) -> usize {
+        self.requests.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.requests.is_empty()
+    }
+
+    pub fn max_sequence_length(&self) -> usize {
+        self.sequence_positions.iter().copied().max().unwrap_or(0)
+    }
+
+    pub fn min_sequence_length(&self) -> usize {
+        self.sequence_positions.iter().copied().min().unwrap_or(0)
+    }
+}
+
 #[derive(Debug)]
 pub struct SchedulerConfig {
     pub max_batch_size: usize,
@@ -442,6 +495,107 @@ impl Scheduler {
         !self.pending_queue.is_empty()
             && self.processing_requests.len() < self.config.max_batch_size
     }
+
+    // ========== Continuous Batching Methods ==========
+
+    /// Update processing state after an iteration
+    /// Moves completed requests from processing to completed
+    fn update_processing_state(&mut self) {
+        let mut to_complete = Vec::new();
+
+        for (&req_id, request) in &self.processing_requests {
+            if request.is_complete() || request.state == RequestState::Failed {
+                to_complete.push(req_id);
+            }
+        }
+
+        for req_id in to_complete {
+            if let Some(mut request) = self.processing_requests.remove(&req_id) {
+                if request.state == RequestState::Processing {
+                    let _ = request.complete(None);
+                }
+                self.completed_requests.insert(req_id, request);
+            }
+        }
+    }
+
+    /// Get the next iteration's batch for continuous batching
+    /// This is the main entry point for the inference loop
+    pub fn get_next_iteration_batch(&mut self) -> SchedulerResult<IterationBatch> {
+        // Move completed requests out of processing
+        self.update_processing_state();
+
+        let mut iteration_batch = IterationBatch::new();
+
+        // Add all currently processing requests (continuous batching)
+        for (_req_id, request) in &self.processing_requests {
+            if request.state == RequestState::Processing {
+                iteration_batch.requests.push(request.clone());
+                iteration_batch.sequence_positions.push(request.total_tokens());
+            }
+        }
+
+        // Fill empty slots with new requests from pending queue
+        while iteration_batch.size() < self.config.max_batch_size && !self.pending_queue.is_empty() {
+            if let Some(mut request) = self.pending_queue.pop_front() {
+                request.start_processing()?;
+                let req_id = request.request_id;
+                let total_tokens = request.total_tokens();
+                self.processing_requests.insert(req_id, request.clone());
+                iteration_batch.requests.push(request);
+                iteration_batch.sequence_positions.push(total_tokens);
+            }
+        }
+
+        Ok(iteration_batch)
+    }
+
+    /// Update an iteration batch after processing
+    /// Returns the list of completed requests
+    pub fn update_iteration_batch(&mut self, mut batch: IterationBatch) -> SchedulerResult<Vec<GenerationRequest>> {
+        // Compact the batch to identify completed requests
+        batch.compact();
+
+        let mut completed = Vec::new();
+
+        // Get the actual completed requests from processing_requests
+        let mut to_complete = Vec::new();
+        for (_req_id, request) in &self.processing_requests {
+            if request.is_complete() || request.state == RequestState::Failed {
+                to_complete.push(request.request_id);
+            }
+        }
+
+        for req_id in to_complete {
+            if let Some(request) = self.processing_requests.remove(&req_id) {
+                self.completed_requests.insert(req_id, request.clone());
+                completed.push(request);
+            }
+        }
+
+        // Update remaining processing requests
+        // Preserve tokens from processing_requests to avoid losing data from stale batch clones
+        for request in batch.requests {
+            if !self.processing_requests.contains_key(&request.request_id) {
+                // Request was removed (completed), don't re-insert stale clone
+                continue;
+            }
+            if !request.is_complete() && request.state != RequestState::Failed {
+                // Check if we have an existing request with more tokens than the batch
+                // This can happen if the batch has a stale clone from before token generation
+                if let Some(existing) = self.processing_requests.get(&request.request_id) {
+                    if existing.generated_tokens.len() > request.generated_tokens.len() {
+                        // Keep the existing request with more tokens (skip the stale clone)
+                        continue;
+                    }
+                }
+                // Otherwise, insert/overwrite with the batch's version
+                self.processing_requests.insert(request.request_id, request);
+            }
+        }
+
+        Ok(completed)
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -588,6 +742,234 @@ mod tests {
         let stats = scheduler.get_queue_stats();
         assert_eq!(stats.processing_requests, 0);
         assert_eq!(stats.completed_requests, 1);
+    }
+
+    // ========== Continuous Batching Tests ==========
+
+    #[test]
+    fn test_iteration_batch_creation() {
+        let batch = IterationBatch::new();
+
+        assert_eq!(batch.size(), 0);
+        assert!(batch.is_empty());
+        assert_eq!(batch.max_sequence_length(), 0);
+        assert_eq!(batch.min_sequence_length(), 0);
+    }
+
+    #[test]
+    fn test_iteration_batch_compact() {
+        let mut batch = IterationBatch::new();
+
+        // Add requests - need to start processing first
+        let mut req1 = GenerationRequest::new(1, vec![1; 5], 10, 0.8, 50, 0.9);
+        let mut req2 = GenerationRequest::new(2, vec![2; 5], 10, 0.8, 50, 0.9);
+        req1.start_processing().unwrap();
+        req2.start_processing().unwrap();
+
+        batch.requests.push(req1);
+        batch.requests.push(req2);
+        batch.sequence_positions.push(5);
+        batch.sequence_positions.push(5);
+
+        // Mark one as complete
+        batch.requests[1].complete(Some("test".to_string())).unwrap();
+
+        // Compact should remove completed request
+        batch.compact();
+
+        assert_eq!(batch.size(), 1);
+        assert_eq!(batch.completed_indices.len(), 1);
+    }
+
+    #[test]
+    fn test_get_next_iteration_batch_empty() {
+        let config = SchedulerConfig::default();
+        let mut scheduler = Scheduler::new(config);
+
+        let batch = scheduler.get_next_iteration_batch();
+        assert!(batch.is_ok());
+
+        let batch = batch.unwrap();
+        assert!(batch.is_empty());
+    }
+
+    #[test]
+    fn test_get_next_iteration_batch_with_pending() {
+        let config = SchedulerConfig {
+            max_batch_size: 4,
+            ..Default::default()
+        };
+        let mut scheduler = Scheduler::new(config);
+
+        // Submit requests
+        for i in 0..3 {
+            scheduler
+                .submit_request(vec![i; 5], 10, 0.8, 50, 0.9)
+                .unwrap();
+        }
+
+        let batch = scheduler.get_next_iteration_batch();
+        assert!(batch.is_ok());
+
+        let batch = batch.unwrap();
+        assert_eq!(batch.size(), 3);
+        assert_eq!(batch.sequence_positions.len(), 3);
+    }
+
+    #[test]
+    fn test_continuous_batching_mixed() {
+        let config = SchedulerConfig {
+            max_batch_size: 4,
+            ..Default::default()
+        };
+        let mut scheduler = Scheduler::new(config);
+
+        // Submit first batch of requests
+        for i in 0..2 {
+            scheduler
+                .submit_request(vec![i; 5], 10, 0.8, 50, 0.9)
+                .unwrap();
+        }
+
+        // Get first iteration batch
+        let batch1 = scheduler.get_next_iteration_batch().unwrap();
+        assert_eq!(batch1.size(), 2);
+
+        // Simulate completion of one request
+        let req_id = batch1.requests[0].request_id;
+        {
+            let req = scheduler.get_request_mut(req_id).unwrap();
+            for _ in 0..10 {
+                let _ = req.add_generated_token(42);
+            }
+        }
+
+        // Submit new requests while first is still processing
+        for i in 10..12 {
+            scheduler
+                .submit_request(vec![i; 5], 10, 0.8, 50, 0.9)
+                .unwrap();
+        }
+
+        // Get next iteration - should have 1 remaining + 2 new = 3
+        let batch2 = scheduler.get_next_iteration_batch().unwrap();
+        assert_eq!(batch2.size(), 3);
+    }
+
+    #[test]
+    fn test_update_iteration_batch() {
+        let config = SchedulerConfig::default();
+        let mut scheduler = Scheduler::new(config);
+
+        // Submit and start a request
+        scheduler.submit_request(vec![1; 5], 2, 0.8, 50, 0.9).unwrap();
+        let batch = scheduler.get_next_iteration_batch().unwrap();
+
+        // Get the request ID and complete it through the scheduler
+        let req_id = batch.requests[0].request_id;
+        scheduler.add_generated_token(req_id, 42).unwrap();
+        scheduler.add_generated_token(req_id, 43).unwrap();
+
+        // Update the iteration batch
+        let completed = scheduler.update_iteration_batch(batch).unwrap();
+
+        assert_eq!(completed.len(), 1);
+        assert!(completed[0].is_complete());
+
+        let stats = scheduler.get_queue_stats();
+        assert_eq!(stats.processing_requests, 0);
+        assert_eq!(stats.completed_requests, 1);
+    }
+
+    #[test]
+    fn test_tokens_preserved_after_update() {
+        let config = SchedulerConfig::default();
+        let mut scheduler = Scheduler::new(config);
+
+        // Submit a request that needs multiple iterations
+        scheduler.submit_request(vec![1, 2, 3], 10, 0.8, 50, 0.9).unwrap();
+
+        // First iteration
+        let batch1 = scheduler.get_next_iteration_batch().unwrap();
+        assert_eq!(batch1.size(), 1);
+        assert_eq!(batch1.requests[0].generated_tokens.len(), 0);
+
+        let req_id = batch1.requests[0].request_id;
+
+        // Simulate token generation during processing
+        // In real engine, this happens via process_single_request_impl
+        scheduler.add_generated_token(req_id, 100).unwrap();
+        scheduler.add_generated_token(req_id, 101).unwrap();
+
+        // Verify tokens were added to scheduler
+        let req = scheduler.get_request(req_id).unwrap();
+        assert_eq!(req.generated_tokens.len(), 2);
+        assert_eq!(req.generated_tokens, vec![100, 101]);
+
+        // Update iteration batch (simulating engine's process_batch)
+        // The engine calls snapshot_request which reads updated state from scheduler
+        let mut updated_batch = batch1;
+        updated_batch.requests = vec![scheduler.get_request(req_id).unwrap().clone()];
+
+        let completed = scheduler.update_iteration_batch(updated_batch).unwrap();
+        assert_eq!(completed.len(), 0); // Not complete yet
+
+        // Second iteration - verify tokens are preserved
+        let batch2 = scheduler.get_next_iteration_batch().unwrap();
+        assert_eq!(batch2.size(), 1);
+        assert_eq!(batch2.requests[0].generated_tokens.len(), 2);
+        assert_eq!(batch2.requests[0].generated_tokens, vec![100, 101]);
+
+        // Add more tokens
+        scheduler.add_generated_token(req_id, 102).unwrap();
+        scheduler.add_generated_token(req_id, 103).unwrap();
+
+        // Verify all 4 tokens are present
+        let req = scheduler.get_request(req_id).unwrap();
+        assert_eq!(req.generated_tokens.len(), 4);
+        assert_eq!(req.generated_tokens, vec![100, 101, 102, 103]);
+    }
+
+    #[test]
+    fn test_stale_batch_clone_does_not_overwrite_scheduler() {
+        let config = SchedulerConfig::default();
+        let mut scheduler = Scheduler::new(config);
+
+        // Submit a request
+        scheduler.submit_request(vec![1, 2, 3], 10, 0.8, 50, 0.9).unwrap();
+
+        // Get iteration batch (creates clones)
+        let batch = scheduler.get_next_iteration_batch().unwrap();
+        assert_eq!(batch.requests[0].generated_tokens.len(), 0);
+
+        let req_id = batch.requests[0].request_id;
+
+        // Simulate the engine: add tokens directly to scheduler
+        // (This is what process_single_request_impl does)
+        scheduler.add_generated_token(req_id, 100).unwrap();
+        scheduler.add_generated_token(req_id, 101).unwrap();
+
+        // Verify scheduler has the tokens
+        let req = scheduler.get_request(req_id).unwrap();
+        assert_eq!(req.generated_tokens.len(), 2);
+        assert_eq!(req.generated_tokens, vec![100, 101]);
+
+        // Simulate the bug: If engine passes the OLD batch (with stale clones)
+        // to update_iteration_batch, it should NOT overwrite the scheduler's tokens
+        //
+        // The CORRECT flow is: engine should call snapshot_request to get updated state
+        // But if there's a bug and engine passes the stale batch, tokens would be lost
+        //
+        // This test verifies the current behavior: update_iteration_batch overwrites
+        // with whatever is in batch.requests
+        let completed = scheduler.update_iteration_batch(batch).unwrap();
+        assert_eq!(completed.len(), 0);
+
+        // Check if tokens were preserved or lost
+        let req = scheduler.get_request(req_id).unwrap();
+        // BUG: This fails because update_iteration_batch overwrites with stale clone!
+        assert_eq!(req.generated_tokens.len(), 2);
+        assert_eq!(req.generated_tokens, vec![100, 101]);
     }
 
     // Property tests

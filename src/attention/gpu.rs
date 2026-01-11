@@ -20,7 +20,7 @@ impl GpuBackend {
     /// Create new GPU backend
     pub fn new() -> Result<Self, AttentionError> {
         let handle = HipBlasHandle::new().map_err(|e| {
-            AttentionError::DimensionError(format!("Failed to create HIP BLAS handle: {}", e))
+            AttentionError::HandleCreation(format!("Failed to create HIP BLAS handle: {}", e))
         })?;
 
         Ok(GpuBackend { _handle: handle })
@@ -48,36 +48,36 @@ impl GpuBackend {
 
         // Create HIP BLAS handle for GPU operations
         let handle = HipBlasHandle::new().map_err(|e| {
-            AttentionError::DimensionError(format!("Failed to create HIP BLAS handle: {}", e))
+            AttentionError::HandleCreation(format!("Failed to create HIP BLAS handle: {}", e))
         })?;
 
         // Allocate GPU buffers
         let q_gpu = HipBuffer::new(std::mem::size_of_val(q)).map_err(|e| {
-            AttentionError::DimensionError(format!("Failed to allocate Q buffer: {}", e))
+            AttentionError::MemoryAllocation(format!("Failed to allocate Q buffer: {}", e))
         })?;
         let k_gpu = HipBuffer::new(std::mem::size_of_val(k)).map_err(|e| {
-            AttentionError::DimensionError(format!("Failed to allocate K buffer: {}", e))
+            AttentionError::MemoryAllocation(format!("Failed to allocate K buffer: {}", e))
         })?;
         let v_gpu = HipBuffer::new(std::mem::size_of_val(v)).map_err(|e| {
-            AttentionError::DimensionError(format!("Failed to allocate V buffer: {}", e))
+            AttentionError::MemoryAllocation(format!("Failed to allocate V buffer: {}", e))
         })?;
 
         // Copy data to GPU
         q_gpu.copy_from_host(q).map_err(|e| {
-            AttentionError::DimensionError(format!("Failed to copy Q to GPU: {}", e))
+            AttentionError::MemoryCopy(format!("Failed to copy Q to GPU: {}", e))
         })?;
         k_gpu.copy_from_host(k).map_err(|e| {
-            AttentionError::DimensionError(format!("Failed to copy K to GPU: {}", e))
+            AttentionError::MemoryCopy(format!("Failed to copy K to GPU: {}", e))
         })?;
         v_gpu.copy_from_host(v).map_err(|e| {
-            AttentionError::DimensionError(format!("Failed to copy V to GPU: {}", e))
+            AttentionError::MemoryCopy(format!("Failed to copy V to GPU: {}", e))
         })?;
 
         // Compute QK^T on GPU with fused scaling
         let mut scores = vec![0.0f32; batch_size * seq_len * seq_len];
         {
-            let scores_gpu = HipBuffer::new(batch_size * seq_len * seq_len).map_err(|e| {
-                AttentionError::DimensionError(format!("Failed to allocate scores buffer: {}", e))
+            let scores_gpu = HipBuffer::new(batch_size * seq_len * seq_len * std::mem::size_of::<f32>()).map_err(|e| {
+                AttentionError::MemoryAllocation(format!("Failed to allocate scores buffer: {}", e))
             })?;
 
             // QK^T matrix multiplication: (batch_size, seq_len, dim) x (batch_size, dim, seq_len) -> (batch_size, seq_len, seq_len)
@@ -89,14 +89,14 @@ impl GpuBackend {
                 // Create sub-buffers for this batch
                 let q_batch =
                     HipBuffer::new(seq_len * dim * std::mem::size_of::<f32>()).map_err(|e| {
-                        AttentionError::DimensionError(format!(
+                        AttentionError::MemoryAllocation(format!(
                             "Failed to create Q batch buffer: {}",
                             e
                         ))
                     })?;
                 let k_batch =
                     HipBuffer::new(dim * seq_len * std::mem::size_of::<f32>()).map_err(|e| {
-                        AttentionError::DimensionError(format!(
+                        AttentionError::MemoryAllocation(format!(
                             "Failed to create K batch buffer: {}",
                             e
                         ))
@@ -106,7 +106,7 @@ impl GpuBackend {
                 q_batch
                     .copy_from_host(&q[q_offset..q_offset + seq_len * dim])
                     .map_err(|e| {
-                        AttentionError::DimensionError(format!(
+                        AttentionError::MemoryCopy(format!(
                             "Failed to copy Q batch to GPU: {}",
                             e
                         ))
@@ -114,7 +114,7 @@ impl GpuBackend {
                 k_batch
                     .copy_from_host(&k[k_offset..k_offset + dim * seq_len])
                     .map_err(|e| {
-                        AttentionError::DimensionError(format!(
+                        AttentionError::MemoryCopy(format!(
                             "Failed to copy K batch to GPU: {}",
                             e
                         ))
@@ -128,12 +128,12 @@ impl GpuBackend {
                     seq_len as i32,
                     dim as i32,
                 )
-                .map_err(|e| AttentionError::DimensionError(format!("GPU matmul failed: {}", e)))?;
+                .map_err(|e| AttentionError::GpuOperation(format!("GPU matmul failed: {}", e)))?;
 
                 // Copy batch result to correct location in scores buffer
                 let mut batch_scores = vec![0.0f32; seq_len * seq_len];
                 scores_batch.copy_to_host(&mut batch_scores).map_err(|e| {
-                    AttentionError::DimensionError(format!("Failed to copy batch scores: {}", e))
+                    AttentionError::MemoryCopy(format!("Failed to copy batch scores: {}", e))
                 })?;
 
                 // Copy to CPU scores array
@@ -151,6 +151,19 @@ impl GpuBackend {
                     seq_len as u32,
                 );
             }
+
+            // CRITICAL: Synchronize after kernel launch before buffer goes out of scope
+            // Without this sync, the kernel may still be executing when scores_gpu is dropped,
+            // causing use-after-free and race conditions.
+            unsafe {
+                let sync_result = crate::backend::hip_backend::hipDeviceSynchronize();
+                if sync_result != 0 {
+                    return Err(AttentionError::GpuOperation(format!(
+                        "GPU synchronization failed after scale kernel with code {}",
+                        sync_result
+                    )));
+                }
+            }
         }
 
         // Apply mask if provided
@@ -165,27 +178,27 @@ impl GpuBackend {
             {
                 let scores_gpu = HipBuffer::new(scores.len() * std::mem::size_of::<f32>())
                     .map_err(|e| {
-                        AttentionError::DimensionError(format!(
+                        AttentionError::MemoryAllocation(format!(
                             "Failed to allocate scores buffer for masking: {}",
                             e
                         ))
                     })?;
                 let mask_gpu = HipBuffer::new(std::mem::size_of_val(mask_data))
                     .map_err(|e| {
-                        AttentionError::DimensionError(format!(
+                        AttentionError::MemoryAllocation(format!(
                             "Failed to allocate mask buffer: {}",
                             e
                         ))
                     })?;
 
                 scores_gpu.copy_from_host(&scores).map_err(|e| {
-                    AttentionError::DimensionError(format!(
+                    AttentionError::MemoryCopy(format!(
                         "Failed to copy scores to GPU for masking: {}",
                         e
                     ))
                 })?;
                 mask_gpu.copy_from_host(mask_data).map_err(|e| {
-                    AttentionError::DimensionError(format!("Failed to copy mask to GPU: {}", e))
+                    AttentionError::MemoryCopy(format!("Failed to copy mask to GPU: {}", e))
                 })?;
 
                 // Launch mask kernel
@@ -198,8 +211,20 @@ impl GpuBackend {
                     );
                 }
 
+                // CRITICAL: Synchronize after kernel launch before using results
+                // Ensures kernel completes before copying data back to host.
+                unsafe {
+                    let sync_result = crate::backend::hip_backend::hipDeviceSynchronize();
+                    if sync_result != 0 {
+                        return Err(AttentionError::GpuOperation(format!(
+                            "GPU synchronization failed after mask kernel with code {}",
+                            sync_result
+                        )));
+                    }
+                }
+
                 scores_gpu.copy_to_host(&mut scores).map_err(|e| {
-                    AttentionError::DimensionError(format!(
+                    AttentionError::MemoryCopy(format!(
                         "Failed to copy masked scores to host: {}",
                         e
                     ))
@@ -211,13 +236,13 @@ impl GpuBackend {
         {
             let scores_gpu =
                 HipBuffer::new(scores.len() * std::mem::size_of::<f32>()).map_err(|e| {
-                    AttentionError::DimensionError(format!(
+                    AttentionError::MemoryAllocation(format!(
                         "Failed to allocate scores buffer for softmax: {}",
                         e
                     ))
                 })?;
             scores_gpu.copy_from_host(&scores).map_err(|e| {
-                AttentionError::DimensionError(format!(
+                AttentionError::MemoryCopy(format!(
                     "Failed to copy scores to GPU for softmax: {}",
                     e
                 ))
@@ -232,8 +257,20 @@ impl GpuBackend {
                 );
             }
 
+            // CRITICAL: Synchronize after kernel launch before using results
+            // Ensures kernel completes before copying data back to host.
+            unsafe {
+                let sync_result = crate::backend::hip_backend::hipDeviceSynchronize();
+                if sync_result != 0 {
+                    return Err(AttentionError::GpuOperation(format!(
+                        "GPU synchronization failed after softmax kernel with code {}",
+                        sync_result
+                    )));
+                }
+            }
+
             scores_gpu.copy_to_host(&mut scores).map_err(|e| {
-                AttentionError::DimensionError(format!(
+                AttentionError::MemoryCopy(format!(
                     "Failed to copy softmax results to host: {}",
                     e
                 ))
@@ -250,16 +287,16 @@ impl GpuBackend {
         {
             let scores_gpu =
                 HipBuffer::new(scores.len() * std::mem::size_of::<f32>()).map_err(|e| {
-                    AttentionError::DimensionError(format!(
+                    AttentionError::MemoryAllocation(format!(
                         "Failed to allocate scores buffer: {}",
                         e
                     ))
                 })?;
             scores_gpu.copy_from_host(&scores).map_err(|e| {
-                AttentionError::DimensionError(format!("Failed to copy scores to GPU: {}", e))
+                AttentionError::MemoryCopy(format!("Failed to copy scores to GPU: {}", e))
             })?;
-            let output_gpu = HipBuffer::new(batch_size * seq_len * dim).map_err(|e| {
-                AttentionError::DimensionError(format!("Failed to allocate output buffer: {}", e))
+            let output_gpu = HipBuffer::new(batch_size * seq_len * dim * std::mem::size_of::<f32>()).map_err(|e| {
+                AttentionError::MemoryAllocation(format!("Failed to allocate output buffer: {}", e))
             })?;
 
             // scores * V matrix multiplication: (batch_size, seq_len, seq_len) x (batch_size, seq_len, dim) -> (batch_size, seq_len, dim)
@@ -271,14 +308,14 @@ impl GpuBackend {
                 // Create sub-buffers for this batch
                 let scores_batch = HipBuffer::new(seq_len * seq_len * std::mem::size_of::<f32>())
                     .map_err(|e| {
-                    AttentionError::DimensionError(format!(
+                    AttentionError::MemoryAllocation(format!(
                         "Failed to create scores batch buffer: {}",
                         e
                     ))
                 })?;
                 let v_batch =
                     HipBuffer::new(seq_len * dim * std::mem::size_of::<f32>()).map_err(|e| {
-                        AttentionError::DimensionError(format!(
+                        AttentionError::MemoryAllocation(format!(
                             "Failed to create V batch buffer: {}",
                             e
                         ))
@@ -288,7 +325,7 @@ impl GpuBackend {
                 scores_batch
                     .copy_from_host(&scores[scores_offset..scores_offset + seq_len * seq_len])
                     .map_err(|e| {
-                        AttentionError::DimensionError(format!(
+                        AttentionError::MemoryCopy(format!(
                             "Failed to copy scores batch to GPU: {}",
                             e
                         ))
@@ -296,7 +333,7 @@ impl GpuBackend {
                 v_batch
                     .copy_from_host(&v[v_offset..v_offset + seq_len * dim])
                     .map_err(|e| {
-                        AttentionError::DimensionError(format!(
+                        AttentionError::MemoryCopy(format!(
                             "Failed to copy V batch to GPU: {}",
                             e
                         ))
@@ -310,12 +347,12 @@ impl GpuBackend {
                     dim as i32,
                     seq_len as i32,
                 )
-                .map_err(|e| AttentionError::DimensionError(format!("GPU matmul failed: {}", e)))?;
+                .map_err(|e| AttentionError::GpuOperation(format!("GPU matmul failed: {}", e)))?;
 
                 // Copy batch result to correct location in output buffer
                 let mut batch_output = vec![0.0f32; seq_len * dim];
                 output_batch.copy_to_host(&mut batch_output).map_err(|e| {
-                    AttentionError::DimensionError(format!("Failed to copy batch output: {}", e))
+                    AttentionError::MemoryCopy(format!("Failed to copy batch output: {}", e))
                 })?;
 
                 // Copy to CPU output array
@@ -326,7 +363,7 @@ impl GpuBackend {
 
             // Copy output back to CPU
             output_gpu.copy_to_host(&mut output).map_err(|e| {
-                AttentionError::DimensionError(format!("Failed to copy output to host: {}", e))
+                AttentionError::MemoryCopy(format!("Failed to copy output to host: {}", e))
             })?;
         }
 
@@ -346,18 +383,18 @@ impl GpuBackend {
         // For now, fallback to host-based computation using DeviceTensor data
         // This establishes the integration pattern before optimizing for full GPU operation
         let q_host = q.to_host_vec().map_err(|e| {
-            AttentionError::DimensionError(format!("Failed to copy Q to host: {}", e))
+            AttentionError::MemoryCopy(format!("Failed to copy Q to host: {}", e))
         })?;
         let k_host = k.to_host_vec().map_err(|e| {
-            AttentionError::DimensionError(format!("Failed to copy K to host: {}", e))
+            AttentionError::MemoryCopy(format!("Failed to copy K to host: {}", e))
         })?;
         let v_host = v.to_host_vec().map_err(|e| {
-            AttentionError::DimensionError(format!("Failed to copy V to host: {}", e))
+            AttentionError::MemoryCopy(format!("Failed to copy V to host: {}", e))
         })?;
         let mask_host = mask
             .map(|m| {
                 m.to_host_vec().map_err(|e| {
-                    AttentionError::DimensionError(format!("Failed to copy mask to host: {}", e))
+                    AttentionError::MemoryCopy(format!("Failed to copy mask to host: {}", e))
                 })
             })
             .transpose()?;
@@ -374,11 +411,11 @@ impl GpuBackend {
 
         // Convert output back to DeviceTensor
         let backend = HipBackend::new().map_err(|e| {
-            AttentionError::DimensionError(format!("Failed to create HIP backend: {}", e))
+            AttentionError::HandleCreation(format!("Failed to create HIP backend: {}", e))
         })?;
         let shape = TensorShape::from_dims(&[output.len()]);
         DeviceTensor::from_host_vec(&backend, output, shape).map_err(|e| {
-            AttentionError::DimensionError(format!("Failed to create output tensor: {}", e))
+            AttentionError::MemoryAllocation(format!("Failed to create output tensor: {}", e))
         })
     }
 }

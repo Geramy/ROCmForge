@@ -1,7 +1,7 @@
 # Error Message Standardization TODO
 
 **Date**: 2026-01-08
-**Status**: IN PROGRESS
+**Status**: ✅ COMPLETE
 **Goal**: Standardize all GPU memory-related error messages across the codebase
 
 ---
@@ -27,29 +27,16 @@
 
 | File | Status | Notes |
 |------|--------|-------|
-| `src/backend/hip_backend.rs` | ✅ Reviewed | Error messages use HIP function names - appropriate |
-| `src/loader/gguf.rs` | ✅ Fixed | Pool error messages standardized |
-| `src/attention/gpu.rs` | ⚠️ Issue | Uses DimensionError for all failures (enum lacks proper variants) |
+| `src/backend/hip_backend.rs` | ✅ Complete | Error messages use HIP function names - appropriate |
+| `src/loader/gguf.rs` | ✅ Complete | Pool error messages standardized |
+| `src/attention/gpu.rs` | ✅ Complete | Uses proper error variants (MemoryAllocation, MemoryCopy, etc.) |
 | `src/model/simple_transformer.rs` | ✅ OK | Uses warnings for optional GPU fallback |
 | `src/ops/attention_gpu.rs` | ✅ OK | Error messages are clear |
 | `src/model/execution_plan.rs` | ✅ OK | Error messages are clear |
-| `src/model/glm_position.rs` | ⚠️ Issue | Uses DimensionError for non-dimension errors |
-| `src/attention/rope.rs` | ⚠️ Issue | Uses DimensionError for non-dimension errors |
-| `src/attention/multi_query.rs` | ⚠️ Issue | Uses DimensionError for non-dimension errors |
+| `src/model/glm_position.rs` | ✅ Complete | Uses proper error variants |
+| `src/attention/rope.rs` | ✅ Complete | Uses proper error variants |
+| `src/attention/multi_query.rs` | ✅ Complete | Uses proper error variants |
 | Test files | ✅ OK | Using `.expect()` in tests is acceptable |
-
-### Known Issues
-
-**Issue 1**: `AttentionError` enum lacks variants for:
-- Memory allocation failures
-- Memory copy failures
-- Handle/creation failures
-- Kernel launch failures
-
-Current workarounds:
-- Everything is mapped to `DimensionError` (semantically incorrect)
-
-**Resolution**: This requires enum expansion, which is a larger refactoring.
 
 ---
 
@@ -62,18 +49,30 @@ Current workarounds:
 - [x] Task 1.4: Audit `src/model/simple_transformer.rs`
 - [x] Task 1.5: Audit remaining production files
 
-### Phase 2: BUG-11 Fixes (COMPLETE)
+### Phase 2: BUG-11 GPU Pool Terminology (COMPLETE)
 - [x] Task 2.1: Fix "Sub-buffer out of bounds" → "GPU memory sub-allocation failed"
 - [x] Task 2.2: Fix pool allocation error messages
 - [x] Task 2.3: Fix tensor creation error messages
 
-### Phase 3: AttentionError Enum (DEFERRED)
-The `AttentionError` enum needs new variants for proper error categorization:
-- `MemoryAllocationFailed(String)`
-- `MemoryCopyFailed(String)`
-- `HandleCreationFailed(String)`
+### Phase 3: AttentionError Enum Expansion (COMPLETE)
+The `AttentionError` enum was expanded with new variants for proper error categorization:
+- `MemoryAllocation(String)` - GPU memory allocation failures
+- `MemoryCopy(String)` - H2D/D2H memory copy failures
+- `GpuOperation(String)` - GPU kernel/operation failures
+- `HandleCreation(String)` - Handle/resource creation failures
+- `Synchronization(String)` - GPU synchronization failures
 
-This is tracked as a separate task (requires changing the error enum and updating all call sites).
+**Files Updated**:
+- `src/attention/mod.rs` - Expanded enum with 5 new variants
+- `src/attention/gpu.rs` - 53 usages updated
+- `src/attention/rope.rs` - 4 usages updated
+- `src/attention/multi_query.rs` - 5 usages updated
+- `src/model/glm_position.rs` - 4 usages updated
+
+**Note**: `DimensionError` is still used appropriately for:
+- Actual dimension/bounds validation (position ID exceeds max_seq_len)
+- Shape constraint violations (head_dim must be even)
+- Input validation (empty position_ids arrays)
 
 ---
 
@@ -82,17 +81,12 @@ This is tracked as a separate task (requires changing the error enum and updatin
 **Started**: 2026-01-08
 **Last Updated**: 2026-01-08
 
-**BUG-11 Status**: ✅ COMPLETE
-The original BUG-11 scope was specifically about GPU memory pool terminology:
-- "Sub-buffer out of bounds" → "GPU memory sub-allocation failed"
-- "Failed to create tensor '{}' from pool #{}" → "GPU memory pool #{} tensor '{}' creation failed"
-- Pool allocation messages → "GPU memory pool #{} allocation failed"
+**Status**: ✅ COMPLETE
 
-All 4 specific messages from BUG-11 are now standardized.
-
----
-
-## Deferred Work
-
-1. **AttentionError enum expansion** - Add proper variants for memory/HIP failures
-2. **Update all AttentionError::DimensionError usages** - Use correct error types
+All error messages are now semantically correct:
+1. GPU memory operations use `MemoryAllocation` / `MemoryCopy`
+2. GPU operations use `GpuOperation`
+3. Handle creation uses `HandleCreation`
+4. Synchronization uses `Synchronization`
+5. Dimension/bounds validation uses `DimensionError`
+6. Shape mismatches use `ShapeMismatch`

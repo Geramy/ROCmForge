@@ -470,7 +470,14 @@ async fn create_engine(gguf: &str) -> anyhow::Result<Arc<InferenceEngine>> {
     engine.load_gguf_model(gguf).await?;
     let engine = Arc::new(engine);
     engine.start().await?;
-    engine.run_inference_loop().await;
+
+    // Start inference loop in background - don't block on it!
+    let engine_clone = engine.clone();
+    tokio::spawn(async move {
+        // Ignore errors on shutdown
+        let _ = engine_clone.run_inference_loop().await;
+    });
+
     Ok(engine)
 }
 

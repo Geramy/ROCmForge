@@ -69,9 +69,12 @@ const BLOCK_SIZE: u32 = 256;  // 8 waves of 32 threads
 const WARP_SIZE: u32 = 32;     // RDNA3 wavefront size
 
 /// Cached kernel modules and functions for MLP operations
+///
+/// NOTE: We do NOT store HipBackend here because that would create a separate
+/// HIP stream from the caller's. Kernels must be launched on the caller's stream
+/// and synchronized on the same stream to avoid hangs.
 #[derive(Debug)]
 struct KernelCache {
-    backend: Arc<HipBackend>,
     swiglu_module: Option<HipModule>,
     swiglu_kernel: Option<HipKernel>,
     rms_norm_module: Option<HipModule>,
@@ -82,28 +85,34 @@ struct KernelCache {
 static GLOBAL_CACHE: Mutex<Option<KernelCache>> = Mutex::new(None);
 
 /// Get or initialize the global kernel cache
+///
+/// Returns cached kernel modules and functions. The caller must provide
+/// their own HipBackend for launching kernels to ensure stream consistency.
 fn get_or_init_cache() -> Result<&'static Mutex<Option<KernelCache>>, HipError> {
     // First check if already initialized
     {
-        let cache = GLOBAL_CACHE.lock().unwrap();
+        let cache = GLOBAL_CACHE.lock()
+            .map_err(|e| HipError::LockPoisoned(format!("GLOBAL_CACHE lock poisoned: {}", e)))?;
         if cache.is_some() {
             return Ok(&GLOBAL_CACHE);
         }
     }
 
     // Need to initialize - drop the read lock first
-    let mut cache = GLOBAL_CACHE.lock().unwrap();
+    let mut cache = GLOBAL_CACHE.lock()
+        .map_err(|e| HipError::LockPoisoned(format!("GLOBAL_CACHE lock poisoned: {}", e)))?;
 
     // Double-check in case another thread initialized while we waited
     if cache.is_some() {
         return Ok(&GLOBAL_CACHE);
     }
 
-    // Create backend
-    let backend = HipBackend::new()
-        .map_err(|e| HipError::InitializationFailed(format!("Failed to create HipBackend: {}", e)))?;
+    // Load SwiGLU kernel module and function
+    // Note: We use a temporary backend just for loading. The actual kernel
+    // launch will use the caller's backend to ensure stream consistency.
+    let load_backend = HipBackend::new()
+        .map_err(|e| HipError::InitializationFailed(format!("Failed to create HipBackend for loading: {}", e)))?;
 
-    // Load SwiGLU kernel
     let swiglu_path = std::env::var("SWIGLU_HSACO")
         .ok()
         .ok_or_else(|| HipError::KernelLoadFailed("SWIGLU_HSACO env var not set".to_string()))?;
@@ -112,10 +121,10 @@ fn get_or_init_cache() -> Result<&'static Mutex<Option<KernelCache>>, HipError> 
         return Err(HipError::KernelLoadFailed(format!("HSACO not found: {}", swiglu_path)));
     }
 
-    let swiglu_module = backend.load_module(&swiglu_path)?;
-    let swiglu_kernel = backend.get_kernel_function(&swiglu_module, "swiglu_kernel")?;
+    let swiglu_module = load_backend.load_module(&swiglu_path)?;
+    let swiglu_kernel = load_backend.get_kernel_function(&swiglu_module, "swiglu_kernel")?;
 
-    // Load RMSNorm kernel
+    // Load RMSNorm kernel module and function
     let rms_norm_path = std::env::var("RMS_NORM_HSACO")
         .ok()
         .ok_or_else(|| HipError::KernelLoadFailed("RMS_NORM_HSACO env var not set".to_string()))?;
@@ -124,12 +133,11 @@ fn get_or_init_cache() -> Result<&'static Mutex<Option<KernelCache>>, HipError> 
         return Err(HipError::KernelLoadFailed(format!("HSACO not found: {}", rms_norm_path)));
     }
 
-    let rms_norm_module = backend.load_module(&rms_norm_path)?;
-    let rms_norm_kernel = backend.get_kernel_function(&rms_norm_module, "rms_norm_kernel")?;
+    let rms_norm_module = load_backend.load_module(&rms_norm_path)?;
+    let rms_norm_kernel = load_backend.get_kernel_function(&rms_norm_module, "rms_norm_kernel")?;
 
-    // Initialize cache
+    // Initialize cache with modules and kernels only (no backend)
     *cache = Some(KernelCache {
-        backend,
         swiglu_module: Some(swiglu_module),
         swiglu_kernel: Some(swiglu_kernel),
         rms_norm_module: Some(rms_norm_module),
@@ -145,6 +153,7 @@ fn get_or_init_cache() -> Result<&'static Mutex<Option<KernelCache>>, HipError> 
 /// where swish(x) = x * sigmoid(x)
 ///
 /// # Arguments
+/// * `backend` - HipBackend to use for kernel launch (ensures stream consistency)
 /// * `gate` - Gate projection tensor [seq_len, intermediate_size]
 /// * `up` - Up projection tensor [seq_len, intermediate_size]
 /// * `output` - Output tensor [seq_len, intermediate_size]
@@ -154,8 +163,13 @@ fn get_or_init_cache() -> Result<&'static Mutex<Option<KernelCache>>, HipError> 
 /// # Returns
 /// * `Ok(())` on success
 /// * `Err(String)` on failure
+///
+/// # IMPORTANT
+/// The caller must synchronize on the SAME backend after calling this function
+/// to ensure the kernel completes before using the output.
 #[cfg(feature = "rocm")]
 pub unsafe fn swiglu_gpu_kernel(
+    backend: &HipBackend,
     gate: *const f32,
     up: *const f32,
     output: *mut f32,
@@ -169,7 +183,6 @@ pub unsafe fn swiglu_gpu_kernel(
 
             let kernel = cache_ref.swiglu_kernel.as_ref()
                 .ok_or_else(|| "swiglu_kernel not loaded".to_string())?;
-            let backend = &cache_ref.backend;
 
             let total_elements = seq_len * intermediate_size;
             let grid_dim = (total_elements.div_ceil(BLOCK_SIZE), 1, 1);
@@ -211,6 +224,7 @@ pub unsafe fn swiglu_gpu_kernel(
 /// where mean is computed over each row independently
 ///
 /// # Arguments
+/// * `backend` - HipBackend to use for kernel launch (ensures stream consistency)
 /// * `input` - Input tensor [seq_len, hidden_size]
 /// * `weight` - Weight tensor [hidden_size]
 /// * `output` - Output tensor [seq_len, hidden_size]
@@ -221,8 +235,13 @@ pub unsafe fn swiglu_gpu_kernel(
 /// # Returns
 /// * `Ok(())` on success
 /// * `Err(String)` on failure
+///
+/// # IMPORTANT
+/// The caller must synchronize on the SAME backend after calling this function
+/// to ensure the kernel completes before using the output.
 #[cfg(feature = "rocm")]
 pub unsafe fn rms_norm_gpu_kernel(
+    backend: &HipBackend,
     input: *const f32,
     weight: *const f32,
     output: *mut f32,
@@ -237,7 +256,6 @@ pub unsafe fn rms_norm_gpu_kernel(
 
             let kernel = cache_ref.rms_norm_kernel.as_ref()
                 .ok_or_else(|| "rms_norm_kernel not loaded".to_string())?;
-            let backend = &cache_ref.backend;
 
             let grid_dim = (seq_len, 1, 1);
             let block_dim = (BLOCK_SIZE, 1, 1);

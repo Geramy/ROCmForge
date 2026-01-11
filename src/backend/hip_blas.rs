@@ -24,6 +24,20 @@ pub type HipBlasResult<T> = Result<T, HipBlasError>;
 extern "C" {
     fn hipblasCreate(handle: *mut *mut c_void) -> i32;
     fn hipblasDestroy(handle: *mut c_void) -> i32;
+    /// Set the HIP stream for hipBLAS operations
+    ///
+    /// Associates a HIP stream with the hipBLAS handle. All subsequent hipBLAS
+    /// operations launched with this handle will be queued on the specified stream.
+    ///
+    /// # Arguments
+    /// * `handle` - hipBLAS handle
+    /// * `stream` - HIP stream (hipStream_t)
+    ///
+    /// # Returns
+    /// HIPBLAS_SUCCESS (0) on success, error code otherwise
+    fn hipblasSetStream(handle: *mut c_void, stream: *mut c_void) -> i32;
+    /// Get the HIP stream associated with the hipBLAS handle
+    fn hipblasGetStream(handle: *mut c_void, stream: *mut *mut c_void) -> i32;
     fn hipblasSaxpy(
         handle: *mut c_void,
         n: i32,
@@ -90,6 +104,46 @@ impl HipBlasHandle {
     pub fn as_ptr(&self) -> *mut c_void {
         self.raw
     }
+
+    /// Set the HIP stream for this hipBLAS handle
+    ///
+    /// All subsequent hipBLAS operations launched with this handle will be
+    /// queued on the specified stream. This is critical for proper
+    /// synchronization when mixing hipBLAS operations with custom HIP kernels.
+    ///
+    /// # Arguments
+    /// * `stream` - Raw pointer to HIP stream (hipStream_t)
+    ///
+    /// # Returns
+    /// * `Ok(())` on success
+    /// * `Err(HipBlasError)` if hipblasSetStream fails
+    pub fn set_stream(&self, stream: *mut c_void) -> HipBlasResult<()> {
+        let result = unsafe { hipblasSetStream(self.raw, stream) };
+
+        if result != HIPBLAS_SUCCESS {
+            return Err(HipBlasError::InitializationFailed(format!(
+                "hipblasSetStream failed with code {}",
+                result
+            )));
+        }
+
+        Ok(())
+    }
+
+    /// Get the HIP stream associated with this hipBLAS handle
+    pub fn get_stream(&self) -> HipBlasResult<*mut c_void> {
+        let mut stream: *mut c_void = ptr::null_mut();
+        let result = unsafe { hipblasGetStream(self.raw, &mut stream) };
+
+        if result != HIPBLAS_SUCCESS {
+            return Err(HipBlasError::InitializationFailed(format!(
+                "hipblasGetStream failed with code {}",
+                result
+            )));
+        }
+
+        Ok(stream)
+    }
 }
 
 impl Drop for HipBlasHandle {
@@ -97,7 +151,7 @@ impl Drop for HipBlasHandle {
         if !self.raw.is_null() {
             let result = unsafe { hipblasDestroy(self.raw) };
             if result != HIPBLAS_SUCCESS {
-                eprintln!("Warning: hipblasDestroy failed with code {}", result);
+                tracing::warn!("hipblasDestroy failed with code {}", result);
             }
         }
     }

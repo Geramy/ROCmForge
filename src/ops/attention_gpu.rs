@@ -57,6 +57,22 @@ impl HipAttentionKernels {
             HipError::GenericError(format!("Failed to create hipBLAS handle: {}", e))
         })?;
 
+        // CRITICAL: Associate hipBLAS handle with the backend's HIP stream
+        //
+        // Without this, hipBLAS uses the default stream while our custom HIP kernels
+        // (softmax, causal_mask) use the backend's custom stream. This causes
+        // synchronization issues and hangs when copy_to_host() calls hipDeviceSynchronize().
+        //
+        // hipDeviceSynchronize() waits for operations on the custom stream, but hipBLAS
+        // operations on the default stream are still pending, causing the D2H copy to
+        // read incomplete data and hang.
+        //
+        // See: https://github.com/ROCm/hip/issues/3370
+        // See: https://rocm.docs.amd.com/projects/HIP/en/latest/how-to/hip_runtime_api/asynchronous.html
+        blas_handle.set_stream(backend.stream().as_ptr()).map_err(|e| {
+            HipError::GenericError(format!("Failed to set hipBLAS stream: {}", e))
+        })?;
+
         Ok(HipAttentionKernels {
             backend: backend.clone(),
             blas_handle,
@@ -135,7 +151,7 @@ impl HipAttentionKernels {
 
         // Prefer GPU implementation, fall back to CPU if needed
         if let Err(err) = self.compute_qk_t_gemm(q, k, output) {
-            eprintln!("hipBLAS QK^T fallback to CPU: {}", err);
+            tracing::warn!("hipBLAS QK^T fallback to CPU: {}", err);
             self.compute_qk_t_cpu_fallback(q, k, output)
         } else {
             Ok(())
@@ -211,7 +227,7 @@ impl HipAttentionKernels {
         #[cfg(feature = "rocm")]
         {
             if let Err(err) = self.apply_causal_mask_gpu(attention, seq_len, cache_len) {
-                eprintln!("hip attention mask fallback to CPU: {}", err);
+                tracing::warn!("hip attention mask fallback to CPU: {}", err);
             } else {
                 return Ok(());
             }
@@ -309,7 +325,7 @@ impl HipAttentionKernels {
         #[cfg(feature = "rocm")]
         {
             if let Err(err) = self.compute_softmax_gpu(attention) {
-                eprintln!("hip attention softmax fallback to CPU: {}", err);
+                tracing::warn!("hip attention softmax fallback to CPU: {}", err);
             } else {
                 return Ok(());
             }
@@ -375,7 +391,7 @@ impl HipAttentionKernels {
         match self.compute_attention_weighted_v_gemm(attention, v, output) {
             Ok(_) => Ok(()),
             Err(err) => {
-                eprintln!("hipBLAS attention*V fallback to CPU: {}", err);
+                tracing::warn!("hipBLAS attention*V fallback to CPU: {}", err);
                 self.compute_attention_weighted_v_cpu_fallback(attention, v, output)
             }
         }

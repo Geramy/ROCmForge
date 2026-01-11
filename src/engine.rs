@@ -87,11 +87,10 @@ struct RequestRuntimeState {
 impl InferenceEngine {
     pub fn new(config: EngineConfig) -> EngineResult<Self> {
         info!("Initializing ROCmForge inference engine");
-        eprintln!("DEBUG: InferenceEngine::new: Starting engine initialization...");
-        let _ = std::io::stderr().flush();
+        tracing::debug!("InferenceEngine::new: Starting engine initialization");
 
         // Initialize HIP backend
-        eprintln!("DEBUG: InferenceEngine::new: Creating cache config...");
+        tracing::debug!("InferenceEngine::new: Creating cache config");
         let cache_config = CacheConfig::new(
             config.cache_page_size,
             config.max_cache_pages,
@@ -100,22 +99,19 @@ impl InferenceEngine {
             config.num_layers,
         )
         .map_err(|e| EngineError::CacheFailed(e.to_string()))?;
-        eprintln!("DEBUG: InferenceEngine::new: Cache config created");
-        let _ = std::io::stderr().flush();
+        tracing::debug!("InferenceEngine::new: Cache config created");
 
-        eprintln!("DEBUG: InferenceEngine::new: Creating HIP backend...");
+        tracing::debug!("InferenceEngine::new: Creating HIP backend");
         // HipBackend::new() returns HipResult<Arc<HipBackend>>
         let backend_arc = HipBackend::new()
             .map_err(|e| EngineError::BackendFailed(e.to_string()))?;
-        eprintln!("DEBUG: InferenceEngine::new: HIP backend Arc created successfully!");
-        let _ = std::io::stderr().flush();
+        tracing::debug!("InferenceEngine::new: HIP backend Arc created successfully");
 
         let kv_cache = Arc::new(RwLock::new(
             KvCache::new(cache_config, backend_arc.clone())
                 .map_err(|e| EngineError::CacheFailed(e.to_string()))?,
         ));
-        eprintln!("DEBUG: InferenceEngine::new: KV cache created");
-        let _ = std::io::stderr().flush();
+        tracing::debug!("InferenceEngine::new: KV cache created");
 
         let scheduler = Arc::new(RwLock::new(Scheduler::new(SchedulerConfig {
             max_batch_size: config.max_batch_size,
@@ -187,26 +183,26 @@ impl InferenceEngine {
 
     pub async fn start(&self) -> EngineResult<()> {
         info!("Starting ROCmForge inference engine");
-        eprintln!("DEBUG: start() called, setting is_running=true");
+        tracing::debug!("start() called, setting is_running=true");
 
         // Set running flag
         *self.is_running.write().await = true;
-        eprintln!("DEBUG: start() is_running now true");
+        tracing::debug!("start() is_running now true");
 
         info!("ROCmForge inference engine started");
         Ok(())
     }
 
     pub async fn run_inference_loop(&self) {
-        eprintln!("DEBUG: run_inference_loop() called");
+        tracing::debug!("run_inference_loop() called");
         let is_running = {
             let flag = self.is_running.read().await;
-            eprintln!("DEBUG: run_inference_loop() is_running={}", *flag);
+            tracing::debug!("run_inference_loop() is_running={}", *flag);
             *flag
         };
 
         if is_running {
-            eprintln!("DEBUG: run_inference_loop() spawning inference loop task");
+            tracing::debug!("run_inference_loop() spawning inference loop task");
             // Start inference loop in background
             let config = self.config.clone();
             let backend = self.backend.clone();
@@ -221,7 +217,7 @@ impl InferenceEngine {
             let is_running = self.is_running.clone();
 
             tokio::spawn(async move {
-                eprintln!("DEBUG: Inference loop task started");
+                tracing::debug!("Inference loop task started");
                 let engine_clone = InferenceEngine {
                     config,
                     backend,
@@ -238,7 +234,7 @@ impl InferenceEngine {
                 engine_clone.inference_loop().await;
             });
         } else {
-            eprintln!("DEBUG: run_inference_loop() NOT spawning because is_running=false");
+            tracing::debug!("run_inference_loop() NOT spawning because is_running=false");
         }
     }
 
@@ -402,13 +398,13 @@ impl InferenceEngine {
 
     async fn inference_loop(&self) {
         info!("Starting inference loop");
-        eprintln!("DEBUG: inference_loop() started");
+        tracing::debug!("inference_loop() started");
 
         let mut iteration = 0u64;
         while *self.is_running.read().await {
             iteration += 1;
             if iteration % 100 == 0 {
-                eprintln!("DEBUG: inference_loop iteration {}", iteration);
+                tracing::debug!("inference_loop iteration {}", iteration);
             }
 
             let start_time = Instant::now();
@@ -420,14 +416,13 @@ impl InferenceEngine {
             };
 
             if iteration % 100 == 0 || (pending && can_create) {
-                eprintln!("DEBUG: inference_loop iter={} has_pending={} can_create={}", iteration, pending, can_create);
+                tracing::debug!("inference_loop iter={} has_pending={} can_create={}", iteration, pending, can_create);
             }
 
             if can_create {
-                eprintln!("DEBUG: inference_loop calling process_batch()");
+                tracing::debug!("inference_loop calling process_batch()");
                 if let Err(e) = self.process_batch().await {
                     error!("Error processing batch: {}", e);
-                    eprintln!("DEBUG: Error processing batch: {}", e);
                 }
             }
 
@@ -439,7 +434,7 @@ impl InferenceEngine {
         }
 
         info!("Inference loop stopped");
-        eprintln!("DEBUG: inference_loop() stopped");
+        tracing::debug!("inference_loop() stopped");
     }
 
     async fn process_batch(&self) -> EngineResult<()> {

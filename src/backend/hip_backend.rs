@@ -17,6 +17,13 @@ extern "C" {
     fn hipMalloc(ptr: *mut *mut c_void, size: usize) -> i32;
     fn hipFree(ptr: *mut c_void) -> i32;
     fn hipMemcpy(dst: *mut c_void, src: *const c_void, count: usize, kind: i32) -> i32;
+    fn hipMemcpyAsync(
+        dst: *mut c_void,
+        src: *const c_void,
+        count: usize,
+        kind: i32,
+        stream: *mut c_void,
+    ) -> i32;
     fn hipMemcpyHtoD(dst: *mut c_void, src: *const c_void, count: usize) -> i32;
     fn hipMemcpyDtoH(dst: *mut c_void, src: *const c_void, count: usize) -> i32;
     fn hipStreamCreate(stream: *mut *mut c_void) -> i32;
@@ -134,6 +141,14 @@ pub enum HipError {
     DeviceError(String),
     #[error("Generic error: {0}")]
     GenericError(String),
+    #[error("Internal lock poisoned - this indicates a bug: {0}")]
+    LockPoisoned(String),
+}
+
+impl<T> From<std::sync::PoisonError<T>> for HipError {
+    fn from(err: std::sync::PoisonError<T>) -> Self {
+        HipError::LockPoisoned(format!("Lock poisoned: {}", err))
+    }
 }
 
 pub type HipResult<T> = Result<T, HipError>;
@@ -161,13 +176,13 @@ pub struct HipStream {
 
 impl HipStream {
     pub fn new() -> HipResult<Self> {
-        eprintln!("DEBUG: HipStream::new: Creating HIP stream...");
+        tracing::debug!("HipStream::new: Creating HIP stream...");
         let mut stream: *mut c_void = ptr::null_mut();
 
         // Create HIP stream
-        eprintln!("DEBUG: HipStream::new: Calling hipStreamCreate...");
+        tracing::debug!("HipStream::new: Calling hipStreamCreate...");
         let result = unsafe { hipStreamCreate(&mut stream) };
-        eprintln!("DEBUG: HipStream::new: hipStreamCreate returned result={}, stream={:?}", result, stream);
+        tracing::debug!("HipStream::new: hipStreamCreate returned result={}, stream={:?}", result, stream);
 
         if result != HIP_SUCCESS {
             return Err(HipError::DeviceError(format!(
@@ -182,7 +197,7 @@ impl HipStream {
             ));
         }
 
-        eprintln!("DEBUG: HipStream::new: HIP stream created successfully");
+        tracing::debug!("HipStream::new: HIP stream created successfully");
         Ok(HipStream { stream })
     }
 
@@ -196,6 +211,11 @@ impl HipStream {
         } else {
             Ok(())
         }
+    }
+
+    /// Get raw stream pointer (for FFI calls like hipblasSetStream)
+    pub fn as_ptr(&self) -> *mut c_void {
+        self.stream
     }
 }
 
@@ -272,7 +292,7 @@ impl HipBuffer {
             if new_offset < base_ptr {
                 // Arithmetic overflow - this should never happen with validated offsets
                 // But we handle it gracefully rather than causing undefined behavior
-                eprintln!("WARNING: Pointer arithmetic overflow detected (base=0x{:x}, offset={})",
+                tracing::warn!("Pointer arithmetic overflow detected (base=0x{:x}, offset={})",
                           base_ptr, self.inner.offset);
                 return std::ptr::null_mut();
             }
@@ -332,7 +352,64 @@ impl HipBuffer {
 
         // Debug for large copies
         if byte_size > 100 * 1024 * 1024 {
-            eprintln!("DEBUG: copy_from_host succeeded: ptr={:?}, size={} MB, offset={}",
+            tracing::debug!("copy_from_host succeeded: ptr={:?}, size={} MB, offset={}",
+                     ptr, byte_size / 1024 / 1024, self.inner.offset);
+        }
+
+        Ok(())
+    }
+
+    /// Copy data from host to device using the specified HIP stream.
+    ///
+    /// This uses `hipMemcpyAsync` which queues the copy on the specified stream,
+    /// ensuring proper ordering with other GPU operations (kernels, hipBLAS) that
+    /// also use the same stream.
+    ///
+    /// # Arguments
+    /// * `data` - Host data to copy
+    /// * `stream` - HIP stream to queue the copy on (typically `backend.stream().as_ptr()`)
+    ///
+    /// # Why This Matters
+    /// Without proper stream association:
+    /// - `hipMemcpy` uses the default stream
+    /// - Kernels/hipBLAS use a custom stream
+    /// - `hipDeviceSynchronize()` waits for all streams but can hang if operations
+    ///   on different streams have dependencies that aren't properly sequenced
+    ///
+    /// By using `hipMemcpyAsync` with the same stream as all other operations,
+    /// we ensure proper ordering and avoid synchronization issues.
+    pub fn copy_from_host_with_stream<T>(&self, data: &[T], stream: *mut c_void) -> HipResult<()> {
+        let byte_size = std::mem::size_of_val(data);
+        if byte_size > self.size() {
+            return Err(HipError::MemoryAllocationFailed(format!(
+                "Source data too large: {} > {}",
+                byte_size, self.size()
+            )));
+        }
+
+        let ptr = self.ptr();
+
+        // Use hipMemcpyAsync to queue the copy on the specified stream
+        let result = unsafe {
+            hipMemcpyAsync(
+                ptr,
+                data.as_ptr() as *const c_void,
+                byte_size,
+                HIP_MEMCPY_HOST_TO_DEVICE,
+                stream,
+            )
+        };
+
+        if result != HIP_SUCCESS {
+            return Err(HipError::MemoryCopyFailed(format!(
+                "hipMemcpyAsync H2D failed with code {} (ptr={:?}, size={}, offset={})",
+                result, ptr, byte_size, self.inner.offset
+            )));
+        }
+
+        // Debug for large copies
+        if byte_size > 100 * 1024 * 1024 {
+            tracing::debug!("copy_from_host_with_stream succeeded: ptr={:?}, size={} MB, offset={}",
                      ptr, byte_size / 1024 / 1024, self.inner.offset);
         }
 
@@ -348,15 +425,21 @@ impl HipBuffer {
             )));
         }
 
-        // For sub-allocated buffers, synchronize before reading
-        if self.inner.offset > 0 {
-            let sync_result = unsafe { hipDeviceSynchronize() };
-            if sync_result != HIP_SUCCESS {
-                return Err(HipError::MemoryCopyFailed(format!(
-                    "Device synchronization failed with code {} before D2H copy",
-                    sync_result
-                )));
-            }
+        // CRITICAL: Always synchronize before D2H copy
+        //
+        // GPU operations (kernels, hipBLAS) run on our custom HIP stream.
+        // hipMemcpyDtoH uses the default stream, so we must synchronize the device
+        // to ensure all GPU operations complete before copying data.
+        //
+        // Without this sync, hipMemcpyDtoH completes immediately (default stream is
+        // empty) but reads stale/uninitialized data because the actual computation
+        // is still pending on our custom stream.
+        let sync_result = unsafe { hipDeviceSynchronize() };
+        if sync_result != HIP_SUCCESS {
+            return Err(HipError::MemoryCopyFailed(format!(
+                "Device synchronization failed with code {} before D2H copy",
+                sync_result
+            )));
         }
 
         let ptr = self.ptr();
@@ -376,6 +459,58 @@ impl HipBuffer {
             let is_aligned = (ptr_addr % 4096) == 0;
             return Err(HipError::MemoryCopyFailed(format!(
                 "hipMemcpyDtoH failed with code {} (base_ptr={:?}, offset={}, final_ptr=0x{:x}, size={} MB, aligned={})",
+                result, self.inner.ptr, self.inner.offset, ptr_addr, byte_size / 1024 / 1024, is_aligned
+            )));
+        }
+
+        Ok(())
+    }
+
+    /// Copy data from device to host using the specified HIP stream.
+    ///
+    /// This uses `hipMemcpyAsync` which queues the copy on the specified stream,
+    /// ensuring proper ordering with other GPU operations.
+    ///
+    /// # Arguments
+    /// * `data` - Host buffer to receive the data
+    /// * `stream` - HIP stream to queue the copy on
+    ///
+    /// # Synchronization
+    /// Unlike `copy_to_host()`, this does NOT call `hipDeviceSynchronize()`.
+    /// The caller is responsible for synchronizing the stream after the async copy
+    /// if they need to wait for completion.
+    ///
+    /// # Why This Matters
+    /// Using the same stream for all operations (copies, kernels, hipBLAS) ensures
+    /// proper ordering and avoids the synchronization issues that can occur when
+    /// mixing default stream operations with custom stream operations.
+    pub fn copy_to_host_with_stream<T>(&self, data: &mut [T], stream: *mut c_void) -> HipResult<()> {
+        let byte_size = std::mem::size_of_val(data);
+        if byte_size > self.size() {
+            return Err(HipError::MemoryAllocationFailed(format!(
+                "Destination buffer too small: {} > {}",
+                byte_size, self.size()
+            )));
+        }
+
+        let ptr = self.ptr();
+
+        // Use hipMemcpyAsync to queue the copy on the specified stream
+        let result = unsafe {
+            hipMemcpyAsync(
+                data.as_mut_ptr() as *mut c_void,
+                ptr,
+                byte_size,
+                HIP_MEMCPY_DEVICE_TO_HOST,
+                stream,
+            )
+        };
+
+        if result != HIP_SUCCESS {
+            let ptr_addr = ptr as usize;
+            let is_aligned = (ptr_addr % 4096) == 0;
+            return Err(HipError::MemoryCopyFailed(format!(
+                "hipMemcpyAsync D2H failed with code {} (base_ptr={:?}, offset={}, final_ptr=0x{:x}, size={} MB, aligned={})",
                 result, self.inner.ptr, self.inner.offset, ptr_addr, byte_size / 1024 / 1024, is_aligned
             )));
         }
@@ -574,14 +709,16 @@ impl HipBackend {
     pub fn new() -> HipResult<Arc<Self>> {
         // Double-checked locking pattern for singleton initialization
         if GLOBAL_INIT_CALLED.load(Ordering::Acquire) {
-            return Ok(GLOBAL_BACKEND.lock().unwrap()
+            return Ok(GLOBAL_BACKEND.lock()
+                .map_err(|e| HipError::LockPoisoned(format!("GLOBAL_BACKEND lock poisoned: {}", e)))?
                 .as_ref()
                 .map(Arc::clone)
                 .expect("Global backend initialized but not set"));
         }
 
         // Initialize under lock
-        let mut guard = GLOBAL_BACKEND.lock().unwrap();
+        let mut guard = GLOBAL_BACKEND.lock()
+            .map_err(|e| HipError::LockPoisoned(format!("GLOBAL_BACKEND lock poisoned: {}", e)))?;
         if GLOBAL_INIT_CALLED.load(Ordering::Acquire) {
             return Ok(guard.as_ref().map(Arc::clone)
                 .expect("Global backend initialized but not set"));
@@ -744,6 +881,34 @@ impl HipBackend {
     }
 
     pub fn synchronize(&self) -> HipResult<()> {
+        self.stream.synchronize()
+    }
+
+    /// Copy data from host to device using the backend's HIP stream.
+    ///
+    /// This is a convenience wrapper around `HipBuffer::copy_from_host_with_stream`
+    /// that automatically uses the backend's stream.
+    ///
+    /// # Why This Exists
+    /// Using `hipMemcpyAsync` with the backend's stream (instead of `hipMemcpy` on
+    /// the default stream) ensures proper ordering with all other GPU operations
+    /// (kernels, hipBLAS) that also use this stream. This prevents synchronization
+    /// issues and hangs that can occur when mixing default stream and custom stream
+    /// operations.
+    pub fn copy_to_device<T>(&self, buffer: &HipBuffer, data: &[T]) -> HipResult<()> {
+        buffer.copy_from_host_with_stream(data, self.stream.as_ptr())
+    }
+
+    /// Copy data from device to host using the backend's HIP stream.
+    ///
+    /// This is a convenience wrapper around `HipBuffer::copy_to_host_with_stream`
+    /// that automatically uses the backend's stream and synchronizes afterward.
+    ///
+    /// # Synchronization
+    /// Unlike `HipBuffer::copy_to_host_with_stream()`, this method synchronizes the
+    /// stream after the async copy to ensure the data is ready before returning.
+    pub fn copy_from_device<T>(&self, buffer: &HipBuffer, data: &mut [T]) -> HipResult<()> {
+        buffer.copy_to_host_with_stream(data, self.stream.as_ptr())?;
         self.stream.synchronize()
     }
 
@@ -919,6 +1084,13 @@ impl HipBackend {
             HipError::GenericError(format!("Failed to create hipBLAS handle: {}", e))
         })?;
 
+        // CRITICAL: Associate hipBLAS handle with our HIP stream
+        // Without this, hipBLAS uses the default stream while our kernels use a custom stream,
+        // causing synchronization issues and hangs.
+        handle.set_stream(self.stream().as_ptr()).map_err(|e| {
+            HipError::GenericError(format!("Failed to set hipBLAS stream: {}", e))
+        })?;
+
         crate::backend::hip_blas::saxpy(
             &handle,
             len as i32,
@@ -940,6 +1112,11 @@ impl HipBackend {
 
         let handle = crate::backend::hip_blas::HipBlasHandle::new().map_err(|e| {
             HipError::GenericError(format!("Failed to create hipBLAS handle: {}", e))
+        })?;
+
+        // CRITICAL: Associate hipBLAS handle with our HIP stream
+        handle.set_stream(self.stream().as_ptr()).map_err(|e| {
+            HipError::GenericError(format!("Failed to set hipBLAS stream: {}", e))
         })?;
 
         crate::backend::hip_blas::sscal(
@@ -980,6 +1157,11 @@ impl HipBackend {
 
         let handle = crate::backend::hip_blas::HipBlasHandle::new().map_err(|e| {
             HipError::GenericError(format!("Failed to create hipBLAS handle: {}", e))
+        })?;
+
+        // CRITICAL: Associate hipBLAS handle with our HIP stream
+        handle.set_stream(self.stream().as_ptr()).map_err(|e| {
+            HipError::GenericError(format!("Failed to set hipBLAS stream: {}", e))
         })?;
 
         let bias_ptr = bias.buffer().as_ptr() as *const f32;
@@ -1204,6 +1386,11 @@ impl DeviceTensor {
     /// * `offset` - Byte offset into the pool where this tensor's data starts
     /// * `host_data` - Host data to copy to the sub-allocated region
     /// * `shape` - Tensor shape
+    ///
+    /// # Note
+    /// This method uses `copy_from_host` which operates on the default HIP stream.
+    /// For model loading, prefer `from_pool_with_backend` which uses the backend's
+    /// stream for proper synchronization.
     pub fn from_pool(
         pool: &HipBuffer,
         offset: usize,
@@ -1217,6 +1404,36 @@ impl DeviceTensor {
 
         // Copy data to the sub-allocated region
         buffer.copy_from_host(&host_data)?;
+
+        Ok(DeviceTensor { buffer, shape })
+    }
+
+    /// Create device tensor as a sub-allocation from a memory pool, using the backend's stream.
+    ///
+    /// This is the preferred method for model loading because it ensures all GPU operations
+    /// (including data transfers) use the same HIP stream, preventing synchronization issues.
+    ///
+    /// # Arguments
+    /// * `pool` - The parent GPU memory pool (large pre-allocated buffer)
+    /// * `offset` - Byte offset into the pool where this tensor's data starts
+    /// * `host_data` - Host data to copy to the sub-allocated region
+    /// * `shape` - Tensor shape
+    /// * `backend` - HIP backend (provides the stream for async copy)
+    pub fn from_pool_with_backend(
+        pool: &HipBuffer,
+        offset: usize,
+        host_data: Vec<f32>,
+        shape: TensorShape,
+        backend: &HipBackend,
+    ) -> HipResult<Self> {
+        let total_bytes = host_data.len() * std::mem::size_of::<f32>();
+
+        // Create a sub-buffer view at the specified offset
+        let buffer = pool.sub_buffer_view(offset, total_bytes)?;
+
+        // Copy data to the sub-allocated region using the backend's stream
+        // This ensures proper ordering with other GPU operations
+        buffer.copy_from_host_with_stream(&host_data, backend.stream().as_ptr())?;
 
         Ok(DeviceTensor { buffer, shape })
     }
@@ -1368,6 +1585,13 @@ impl HipBackend {
             HipError::GenericError(format!("Failed to create hipBLAS handle: {}", e))
         })?;
 
+        // CRITICAL: Associate hipBLAS handle with our HIP stream
+        // This ensures all hipBLAS operations (matmul) are queued on the same stream
+        // as our custom HIP kernels, preventing synchronization issues and hangs.
+        blas_handle.set_stream(self.stream().as_ptr()).map_err(|e| {
+            HipError::GenericError(format!("Failed to set hipBLAS stream: {}", e))
+        })?;
+
         // Step 1: Compute gate projection: hidden_states @ gate_weight -> gate_output
         // hidden_states: [seq_len, hidden_size], gate_weight: [hidden_size, intermediate_size]
         // gate_output: [seq_len, intermediate_size]
@@ -1394,6 +1618,10 @@ impl HipBackend {
         )
         .map_err(|e| HipError::GenericError(format!("Up projection failed: {}", e)))?;
 
+        // Synchronize to ensure matmul operations complete before SwiGLU kernel
+        // hipBLAS uses default stream, while our kernel uses custom stream
+        self.synchronize()?;
+
         // Step 3: Apply SwiGLU activation using GPU kernel
         // SwiGLU = gate_output ⊙ Swish(up_output)
         // where Swish(x) = x ⊙ σ(x)
@@ -1405,6 +1633,7 @@ impl HipBackend {
             // Launch GPU kernel for SwiGLU activation
             unsafe {
                 crate::mlp::kernels::swiglu_gpu_kernel(
+                    self,  // Pass caller's backend to ensure stream consistency
                     gate_buffer.as_ptr() as *const f32,
                     up_buffer.as_ptr() as *const f32,
                     swiglu_buffer.as_mut_ptr() as *mut f32,
@@ -1761,11 +1990,11 @@ impl ModelRuntime {
     /// NOTE: This creates a default KV cache that will be discarded if load_model() is called.
     /// For direct GGUF loading without waste, use load_from_gguf() instead.
     pub fn new() -> HipResult<Self> {
-        eprintln!("DEBUG: ModelRuntime::new() called");
+        tracing::debug!("ModelRuntime::new() called");
         // HipBackend::new() now returns &'static HipBackend, clone it
         let backend_ref = HipBackend::new()?;
         let backend = backend_ref.clone();
-        eprintln!("DEBUG: ModelRuntime::new() backend created, creating scratch buffer...");
+        tracing::debug!("ModelRuntime::new() backend created, creating scratch buffer...");
         let scratch = crate::backend::scratch::ScratchBufferManager::new(
             &backend, 32,   // num_heads
             2048, // max_seq_len
@@ -1773,7 +2002,7 @@ impl ModelRuntime {
             4096, // hidden_size
         )
         .map_err(|e| HipError::GenericError(format!("Scratch buffer creation failed: {}", e)))?;
-        eprintln!("DEBUG: ModelRuntime::new() scratch buffer created, creating KV cache...");
+        tracing::debug!("ModelRuntime::new() scratch buffer created, creating KV cache...");
 
         let kv_cache = crate::model::kv_cache::KVCache::new(
             &backend, 32,   // num_layers
@@ -1782,7 +2011,7 @@ impl ModelRuntime {
             2048, // max_seq_len
         )
         .map_err(|e| HipError::GenericError(format!("KV cache creation failed: {}", e)))?;
-        eprintln!("DEBUG: ModelRuntime::new() KV cache created, returning ModelRuntime");
+        tracing::debug!("ModelRuntime::new() KV cache created, returning ModelRuntime");
 
         Ok(ModelRuntime {
             backend,
@@ -1796,22 +2025,22 @@ impl ModelRuntime {
     /// Load model directly from GGUF file without creating an intermediate runtime
     /// This avoids creating a wasteful default KV cache (32 layers) that would be discarded.
     pub fn load_from_gguf(path: &str) -> HipResult<Self> {
-        eprintln!("DEBUG: load_from_gguf: Loading GGUF from path: {}", path);
+        tracing::debug!("load_from_gguf: Loading GGUF from path: {}", path);
 
         let loader = crate::loader::gguf::GgufLoader::new(path)
             .map_err(|e| HipError::GenericError(format!("Failed to load GGUF: {}", e)))?;
-        eprintln!("DEBUG: load_from_gguf: GgufLoader created successfully");
+        tracing::debug!("load_from_gguf: GgufLoader created successfully");
 
         let config = loader
             .to_model_config()
             .map_err(|e| HipError::GenericError(format!("Failed to create config: {}", e)))?;
-        eprintln!("DEBUG: load_from_gguf: Config created - layers={}, heads={}, hidden={}",
+        tracing::debug!("load_from_gguf: Config created - layers={}, heads={}, hidden={}",
                  config.num_hidden_layers, config.num_attention_heads, config.hidden_size);
 
         // Create backend
         let backend = HipBackend::new()?;
 
-        eprintln!("DEBUG: load_from_gguf: Creating scratch buffer manager...");
+        tracing::debug!("load_from_gguf: Creating scratch buffer manager...");
         let scratch = crate::backend::scratch::ScratchBufferManager::new(
             &backend,
             config.num_attention_heads,
@@ -1820,9 +2049,9 @@ impl ModelRuntime {
             config.hidden_size,
         )
         .map_err(|e| HipError::GenericError(format!("Scratch buffer creation failed: {}", e)))?;
-        eprintln!("DEBUG: load_from_gguf: Scratch buffer manager created");
+        tracing::debug!("load_from_gguf: Scratch buffer manager created");
 
-        eprintln!("DEBUG: load_from_gguf: Creating KV cache...");
+        tracing::debug!("load_from_gguf: Creating KV cache...");
         let kv_cache = crate::model::kv_cache::KVCache::new(
             &backend,
             config.num_hidden_layers,
@@ -1831,14 +2060,14 @@ impl ModelRuntime {
             config.max_position_embeddings,
         )
         .map_err(|e| HipError::GenericError(format!("KV cache creation failed: {}", e)))?;
-        eprintln!("DEBUG: load_from_gguf: KV cache created");
+        tracing::debug!("load_from_gguf: KV cache created");
 
-        eprintln!("DEBUG: load_from_gguf: Creating execution plan from GGUF...");
+        tracing::debug!("load_from_gguf: Creating execution plan from GGUF...");
         let execution_plan =
             crate::model::execution_plan::ExecutionPlan::from_gguf(&backend, &loader)?;
-        eprintln!("DEBUG: load_from_gguf: Execution plan created successfully");
+        tracing::debug!("load_from_gguf: Execution plan created successfully");
 
-        eprintln!("DEBUG: load_from_gguf: ModelRuntime created successfully");
+        tracing::debug!("load_from_gguf: ModelRuntime created successfully");
         Ok(ModelRuntime {
             backend,
             execution_plan: Some(execution_plan),
@@ -1922,9 +2151,11 @@ impl ModelRuntime {
 
     /// Decode step with input tensor
     pub fn decode_step(&mut self, input: &DeviceTensor) -> HipResult<DeviceTensor> {
+        tracing::debug!("decode_step() called, input shape: {:?}", input.shape().dims());
         let execution_plan = self.execution_plan.as_ref().ok_or_else(|| {
             HipError::GenericError("decode_step called without execution plan".to_string())
         })?;
+        tracing::debug!("decode_step() execution plan has {} layers", execution_plan.layers().len());
 
         if execution_plan.layers().is_empty() {
             return Err(HipError::GenericError(
@@ -1961,7 +2192,9 @@ impl ModelRuntime {
             )));
         };
 
+        tracing::debug!("decode_step() starting layer loop with {} layers", execution_plan.layers().len());
         for (layer_idx, layer_plan) in execution_plan.layers().iter().enumerate() {
+            tracing::debug!("decode_step() processing layer {}/{}", layer_idx + 1, execution_plan.layers().len());
             hidden_states = execution_plan.forward_layer(
                 &self.backend,
                 &hidden_states,
@@ -1969,7 +2202,9 @@ impl ModelRuntime {
                 Some(&mut self.kv_cache),
                 layer_idx,
             )?;
+            tracing::debug!("decode_step() completed layer {}/{}", layer_idx + 1, execution_plan.layers().len());
         }
+        tracing::debug!("decode_step() all layers completed, applying LM head");
 
         let logits = execution_plan.apply_lm_head(&self.backend, &hidden_states)?;
         let logits_dims = logits.shape().dims();
@@ -1987,19 +2222,19 @@ impl ModelRuntime {
 
     /// Load model from GGUF file
     pub fn load_model(&self, path: &str) -> HipResult<Self> {
-        eprintln!("DEBUG: load_model: Loading GGUF from path: {}", path);
+        tracing::debug!("load_model: Loading GGUF from path: {}", path);
 
         let loader = crate::loader::gguf::GgufLoader::new(path)
             .map_err(|e| HipError::GenericError(format!("Failed to load GGUF: {}", e)))?;
-        eprintln!("DEBUG: load_model: GgufLoader created successfully");
+        tracing::debug!("load_model: GgufLoader created successfully");
 
         let config = loader
             .to_model_config()
             .map_err(|e| HipError::GenericError(format!("Failed to create config: {}", e)))?;
-        eprintln!("DEBUG: load_model: Config created - layers={}, heads={}, hidden={}",
+        tracing::debug!("load_model: Config created - layers={}, heads={}, hidden={}",
                  config.num_hidden_layers, config.num_attention_heads, config.hidden_size);
 
-        eprintln!("DEBUG: load_model: Creating scratch buffer manager...");
+        tracing::debug!("load_model: Creating scratch buffer manager...");
         let scratch = crate::backend::scratch::ScratchBufferManager::new(
             &self.backend,
             config.num_attention_heads,
@@ -2008,9 +2243,9 @@ impl ModelRuntime {
             config.hidden_size,
         )
         .map_err(|e| HipError::GenericError(format!("Scratch buffer creation failed: {}", e)))?;
-        eprintln!("DEBUG: load_model: Scratch buffer manager created");
+        tracing::debug!("load_model: Scratch buffer manager created");
 
-        eprintln!("DEBUG: load_model: Creating KV cache...");
+        tracing::debug!("load_model: Creating KV cache...");
         let kv_cache = crate::model::kv_cache::KVCache::new(
             &self.backend,
             config.num_hidden_layers,
@@ -2019,14 +2254,14 @@ impl ModelRuntime {
             config.max_position_embeddings,
         )
         .map_err(|e| HipError::GenericError(format!("KV cache creation failed: {}", e)))?;
-        eprintln!("DEBUG: load_model: KV cache created");
+        tracing::debug!("load_model: KV cache created");
 
-        eprintln!("DEBUG: load_model: Creating execution plan from GGUF...");
+        tracing::debug!("load_model: Creating execution plan from GGUF...");
         let execution_plan =
             crate::model::execution_plan::ExecutionPlan::from_gguf(&self.backend, &loader)?;
-        eprintln!("DEBUG: load_model: Execution plan created successfully");
+        tracing::debug!("load_model: Execution plan created successfully");
 
-        eprintln!("DEBUG: load_model: ModelRuntime created successfully");
+        tracing::debug!("load_model: ModelRuntime created successfully");
         Ok(ModelRuntime {
             backend: self.backend.clone(),
             execution_plan: Some(execution_plan),

@@ -546,7 +546,15 @@ pub async fn run_server(
     engine.load_gguf_model(&model_path).await?;
     let engine = Arc::new(engine);
     engine.start().await?;
-    engine.run_inference_loop().await;
+
+    // Start inference loop in background - don't block on it!
+    // This follows the same pattern as rocmforge_cli.rs:474-479
+    let engine_clone = engine.clone();
+    tokio::spawn(async move {
+        // Ignore errors on shutdown
+        let _ = engine_clone.run_inference_loop().await;
+    });
+
     let server = InferenceServer::new(Some(engine), tokenizer.clone());
 
     let app = create_router(server);
@@ -658,5 +666,25 @@ mod tests {
         assert_eq!(json.get("status").unwrap(), "healthy");
         assert_eq!(json.get("service").unwrap(), "rocmforge");
         assert_eq!(json.get("version").unwrap(), "0.1.0");
+    }
+
+    #[tokio::test]
+    async fn test_server_creation_does_not_require_engine() {
+        // Server can be created without an engine (for testing purposes)
+        let tokenizer = TokenizerAdapter::default();
+        let server = InferenceServer::new(None, tokenizer);
+
+        // Server should reject requests without engine
+        let request = GenerateRequest {
+            prompt: "Test".to_string(),
+            max_tokens: Some(5),
+            temperature: None,
+            top_k: None,
+            top_p: None,
+            stream: None,
+        };
+
+        let response = server.generate(request).await;
+        assert!(response.is_err());
     }
 }

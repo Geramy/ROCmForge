@@ -50,14 +50,16 @@ static GLOBAL_CACHE: Mutex<Option<KernelCache>> = Mutex::new(None);
 fn get_or_init_cache() -> Result<&'static Mutex<Option<KernelCache>>, HipError> {
     // First check if already initialized
     {
-        let cache = GLOBAL_CACHE.lock().unwrap();
+        let cache = GLOBAL_CACHE.lock()
+            .map_err(|e| HipError::LockPoisoned(format!("GLOBAL_CACHE lock poisoned: {}", e)))?;
         if cache.is_some() {
             return Ok(&GLOBAL_CACHE);
         }
     }
 
     // Need to initialize - drop the read lock first
-    let mut cache = GLOBAL_CACHE.lock().unwrap();
+    let mut cache = GLOBAL_CACHE.lock()
+        .map_err(|e| HipError::LockPoisoned(format!("GLOBAL_CACHE lock poisoned: {}", e)))?;
 
     // Double-check in case another thread initialized while we waited
     if cache.is_some() {
@@ -244,10 +246,13 @@ pub unsafe fn scale_gpu_kernel(
 ) -> i32 {
     match get_or_init_cache() {
         Ok(cache_ref) => {
-            let cache = cache_ref.lock().unwrap();
-            let cache_ref = cache.as_ref().unwrap();
+            let cache = cache_ref.lock()
+                .expect("GLOBAL_CACHE lock poisoned in scale_gpu_kernel");
+            let cache_ref = cache.as_ref()
+                .expect("KernelCache not initialized in scale_gpu_kernel");
 
-            let kernel = cache_ref.scale_kernel.as_ref().unwrap();
+            let kernel = cache_ref.scale_kernel.as_ref()
+                .expect("scale_kernel not initialized");
             let backend = &cache_ref.backend;
 
             // Calculate grid dimensions
@@ -293,10 +298,13 @@ pub unsafe fn mask_gpu_kernel(
 ) -> i32 {
     match get_or_init_cache() {
         Ok(cache_ref) => {
-            let cache = cache_ref.lock().unwrap();
-            let cache_ref = cache.as_ref().unwrap();
+            let cache = cache_ref.lock()
+                .expect("GLOBAL_CACHE lock poisoned in mask_gpu_kernel");
+            let cache_ref = cache.as_ref()
+                .expect("KernelCache not initialized in mask_gpu_kernel");
 
-            let kernel = cache_ref.mask_kernel.as_ref().unwrap();
+            let kernel = cache_ref.mask_kernel.as_ref()
+                .expect("mask_kernel not initialized");
             let backend = &cache_ref.backend;
 
             // Calculate grid dimensions
@@ -340,10 +348,13 @@ pub unsafe fn softmax_gpu_kernel(
 ) -> i32 {
     match get_or_init_cache() {
         Ok(cache_ref) => {
-            let cache = cache_ref.lock().unwrap();
-            let cache_ref = cache.as_ref().unwrap();
+            let cache = cache_ref.lock()
+                .expect("GLOBAL_CACHE lock poisoned in softmax_gpu_kernel");
+            let cache_ref = cache.as_ref()
+                .expect("KernelCache not initialized in softmax_gpu_kernel");
 
-            let kernel = cache_ref.softmax_kernel.as_ref().unwrap();
+            let kernel = cache_ref.softmax_kernel.as_ref()
+                .expect("softmax_kernel not initialized");
             let backend = &cache_ref.backend;
 
             // One block per row
@@ -393,10 +404,13 @@ pub unsafe fn rope_gpu_kernel(
 ) -> i32 {
     match get_or_init_cache() {
         Ok(cache_ref) => {
-            let cache = cache_ref.lock().unwrap();
-            let cache_ref = cache.as_ref().unwrap();
+            let cache = cache_ref.lock()
+                .expect("GLOBAL_CACHE lock poisoned in rope_gpu_kernel");
+            let cache_ref = cache.as_ref()
+                .expect("KernelCache not initialized in rope_gpu_kernel");
 
-            let kernel = cache_ref.rope_kernel.as_ref().unwrap();
+            let kernel = cache_ref.rope_kernel.as_ref()
+                .expect("rope_kernel not initialized");
             let backend = &cache_ref.backend;
 
             // Grid: (seq_len, num_heads, 1) - one block per token per head
@@ -496,8 +510,10 @@ pub unsafe fn qkt_matmul_gpu_kernel_scaled(
 ) -> Result<(), String> {
     match get_or_init_cache() {
         Ok(cache_ref) => {
-            let cache = cache_ref.lock().unwrap();
-            let cache_ref = cache.as_ref().unwrap();
+            let cache = cache_ref.lock()
+                .map_err(|e| format!("GLOBAL_CACHE lock poisoned: {}", e))?;
+            let cache_ref = cache.as_ref()
+                .ok_or_else(|| "KernelCache not initialized".to_string())?;
 
             let kernel = cache_ref.qkt_matmul_kernel.as_ref()
                 .ok_or_else(|| "qkt_matmul_kernel not loaded".to_string())?;
@@ -567,8 +583,10 @@ pub unsafe fn weighted_matmul_gpu_kernel(
 ) -> Result<(), String> {
     match get_or_init_cache() {
         Ok(cache_ref) => {
-            let cache = cache_ref.lock().unwrap();
-            let cache_ref = cache.as_ref().unwrap();
+            let cache = cache_ref.lock()
+                .map_err(|e| format!("GLOBAL_CACHE lock poisoned: {}", e))?;
+            let cache_ref = cache.as_ref()
+                .ok_or_else(|| "KernelCache not initialized".to_string())?;
 
             let kernel = cache_ref.weighted_matmul_kernel.as_ref()
                 .ok_or_else(|| "weighted_matmul_kernel not loaded".to_string())?;
@@ -638,8 +656,10 @@ pub unsafe fn flash_attention_nocausal_gpu_kernel(
 ) -> Result<(), String> {
     match get_or_init_cache() {
         Ok(cache_ref) => {
-            let cache = cache_ref.lock().unwrap();
-            let cache_ref = cache.as_ref().unwrap();
+            let cache = cache_ref.lock()
+                .map_err(|e| format!("GLOBAL_CACHE lock poisoned: {}", e))?;
+            let cache_ref = cache.as_ref()
+                .ok_or_else(|| "KernelCache not initialized".to_string())?;
 
             let kernel = cache_ref.flash_attention_nocausal_kernel.as_ref()
                 .ok_or_else(|| "flash_attention_nocausal_kernel not loaded".to_string())?;
@@ -705,8 +725,10 @@ pub unsafe fn causal_mask_gpu_kernel(
 ) -> Result<(), String> {
     match get_or_init_cache() {
         Ok(cache_ref) => {
-            let cache = cache_ref.lock().unwrap();
-            let cache_ref = cache.as_ref().unwrap();
+            let cache = cache_ref.lock()
+                .map_err(|e| format!("GLOBAL_CACHE lock poisoned: {}", e))?;
+            let cache_ref = cache.as_ref()
+                .ok_or_else(|| "KernelCache not initialized".to_string())?;
 
             let kernel = cache_ref.causal_mask_kernel.as_ref()
                 .ok_or_else(|| "causal_mask_kernel not loaded".to_string())?;
@@ -766,8 +788,10 @@ pub unsafe fn flash_attention_causal_gpu_kernel(
 ) -> Result<(), String> {
     match get_or_init_cache() {
         Ok(cache_ref) => {
-            let cache = cache_ref.lock().unwrap();
-            let cache_ref = cache.as_ref().unwrap();
+            let cache = cache_ref.lock()
+                .map_err(|e| format!("GLOBAL_CACHE lock poisoned: {}", e))?;
+            let cache_ref = cache.as_ref()
+                .ok_or_else(|| "KernelCache not initialized".to_string())?;
 
             let kernel = cache_ref.flash_attention_causal_kernel.as_ref()
                 .ok_or_else(|| "flash_attention_causal_kernel not loaded".to_string())?;
@@ -843,10 +867,19 @@ pub unsafe fn flash_attention_gpu_kernel(
 ) -> i32 {
     match get_or_init_cache() {
         Ok(cache_ref) => {
-            let cache = cache_ref.lock().unwrap();
-            let cache_ref = cache.as_ref().unwrap();
+            let cache = match cache_ref.lock() {
+                Ok(guard) => guard,
+                Err(_) => return -1,
+            };
+            let cache_ref = match cache.as_ref() {
+                Some(c) => c,
+                None => return -1,
+            };
 
-            let kernel = cache_ref.flash_attention_kernel.as_ref().unwrap();
+            let kernel = match cache_ref.flash_attention_kernel.as_ref() {
+                Some(k) => k,
+                None => return -1,
+            };
             let backend = &cache_ref.backend;
 
             // Grid: (seq_len, num_heads, batch_size)
@@ -914,10 +947,19 @@ pub unsafe fn position_embeddings_gpu_kernel(
 ) -> i32 {
     match get_or_init_cache() {
         Ok(cache_ref) => {
-            let cache = cache_ref.lock().unwrap();
-            let cache_ref = cache.as_ref().unwrap();
+            let cache = match cache_ref.lock() {
+                Ok(guard) => guard,
+                Err(_) => return -1,
+            };
+            let cache_ref = match cache.as_ref() {
+                Some(c) => c,
+                None => return -1,
+            };
 
-            let kernel = cache_ref.position_embeddings_kernel.as_ref().unwrap();
+            let kernel = match cache_ref.position_embeddings_kernel.as_ref() {
+                Some(k) => k,
+                None => return -1,
+            };
             let backend = &cache_ref.backend;
 
             // Grid: (seq_len, num_heads, 1) - one block per token per head

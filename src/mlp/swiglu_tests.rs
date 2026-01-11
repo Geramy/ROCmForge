@@ -79,6 +79,7 @@ mod swiglu_tests {
 
         let result = unsafe {
             crate::mlp::kernels::swiglu_gpu_kernel(
+                &backend,  // Pass backend to ensure stream consistency
                 gate_gpu.as_ptr() as *const f32,
                 up_gpu.as_ptr() as *const f32,
                 out_gpu.buffer().as_mut_ptr() as *mut f32,
@@ -137,6 +138,7 @@ mod swiglu_tests {
 
         let result = unsafe {
             crate::mlp::kernels::swiglu_gpu_kernel(
+                &backend,  // Pass backend to ensure stream consistency
                 gate_gpu.as_ptr() as *const f32,
                 up_gpu.as_ptr() as *const f32,
                 out_gpu.buffer().as_mut_ptr() as *mut f32,
@@ -188,6 +190,7 @@ mod swiglu_tests {
 
         let result = unsafe {
             crate::mlp::kernels::swiglu_gpu_kernel(
+                &backend,  // Pass backend to ensure stream consistency
                 gate_gpu.as_ptr() as *const f32,
                 up_gpu.as_ptr() as *const f32,
                 out_gpu.buffer().as_mut_ptr() as *mut f32,
@@ -238,6 +241,7 @@ mod swiglu_tests {
 
         let result = unsafe {
             crate::mlp::kernels::swiglu_gpu_kernel(
+                &backend,  // Pass backend to ensure stream consistency
                 gate_gpu.as_ptr() as *const f32,
                 up_gpu.as_ptr() as *const f32,
                 out_gpu.buffer().as_mut_ptr() as *mut f32,

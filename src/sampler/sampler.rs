@@ -171,7 +171,8 @@ impl Sampler {
             .collect();
 
         // Sort by score in descending order
-        token_scores.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap());
+        // Use total_cmp to handle NaN values properly (NaN sorts last)
+        token_scores.sort_by(|a, b| b.score.total_cmp(&a.score));
 
         // Keep top-k tokens
         token_scores.truncate(self.config.top_k);
@@ -189,12 +190,13 @@ impl Sampler {
         let probabilities = self.softmax(&scores)?;
 
         // Sort by probability in descending order
+        // Use total_cmp to handle NaN values properly (NaN sorts last)
         let mut indexed_probs: Vec<(usize, f32)> = probabilities
             .iter()
             .enumerate()
             .map(|(i, &prob)| (i, prob))
             .collect();
-        indexed_probs.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap());
+        indexed_probs.sort_by(|a, b| b.1.total_cmp(&a.1));
 
         // Find smallest set where cumulative probability >= top_p
         let mut cumulative_prob = 0.0;
@@ -265,10 +267,11 @@ impl Sampler {
             }
             Err(_) => {
                 // Fallback to argmax if weighted distribution fails
+                // Use total_cmp to handle NaN values properly (NaN sorts last)
                 let max_index = probabilities
                     .iter()
                     .enumerate()
-                    .max_by(|(_, a), (_, b)| a.partial_cmp(b).unwrap())
+                    .max_by(|(_, a), (_, b)| a.total_cmp(b))
                     .map(|(i, _)| i)
                     .unwrap_or(0);
                 Ok(token_scores[max_index].token_id)
@@ -281,10 +284,11 @@ impl Sampler {
             return Err(SamplerError::EmptyLogits);
         }
 
+        // Use total_cmp to handle NaN values properly (NaN sorts last)
         let max_index = logits
             .iter()
             .enumerate()
-            .max_by(|(_, a), (_, b)| a.partial_cmp(b).unwrap())
+            .max_by(|(_, a), (_, b)| a.total_cmp(b))
             .map(|(i, _)| i)
             .unwrap_or(0);
 

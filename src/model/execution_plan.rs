@@ -4,9 +4,10 @@
 //! Minimal design - no dynamic graph, no heavyweight abstractions.
 
 use crate::backend::{DeviceTensor, HipBackend, HipError, HipResult};
+use crate::attention::rope::RopeConfig;
 use crate::loader::gguf::GgufLoader;
 use crate::loader::TensorShape;
-use crate::model::{config::ModelConfig, kv_cache::KVCache};
+use crate::model::{config::ModelConfig, glm_position::GlmPositionHandler, kv_cache::KVCache};
 use crate::ops::attention_gpu::HipAttentionKernels;
 use std::collections::HashSet;
 
@@ -51,6 +52,8 @@ pub struct ExecutionPlan {
     config: ModelConfig,
     embedding_weights: DeviceTensor,
     lm_head: DeviceTensor,
+    /// Position encoding handler for applying RoPE embeddings
+    position_handler: Option<GlmPositionHandler>,
 }
 
 /// Execution plan for a single transformer layer
@@ -124,11 +127,24 @@ impl ExecutionPlan {
             .collect();
         lm_head.buffer().copy_from_host(&lm_head_data)?;
 
+        // Initialize position encoding handler if rotary embeddings are enabled
+        let position_handler = if config.use_rotary_embeddings {
+            let rope_config = RopeConfig::new(config.head_dim, config.max_position_embeddings);
+            let glm_config = crate::model::glm_position::GlmPositionConfig::new(config.max_position_embeddings)
+                .with_rope(rope_config);
+            Some(GlmPositionHandler::new(glm_config).map_err(|e| {
+                HipError::GenericError(format!("Failed to create position handler: {}", e))
+            })?)
+        } else {
+            None
+        };
+
         Ok(ExecutionPlan {
             layers,
             config: config.clone(),
             embedding_weights,
             lm_head,
+            position_handler,
         })
     }
 
@@ -279,11 +295,24 @@ impl ExecutionPlan {
             layers.push(layer_plan);
         }
 
+        // Initialize position encoding handler if rotary embeddings are enabled
+        let position_handler = if config.use_rotary_embeddings {
+            let rope_config = RopeConfig::new(config.head_dim, config.max_position_embeddings);
+            let glm_config = crate::model::glm_position::GlmPositionConfig::new(config.max_position_embeddings)
+                .with_rope(rope_config);
+            Some(GlmPositionHandler::new(glm_config).map_err(|e| {
+                HipError::GenericError(format!("Failed to create position handler: {}", e))
+            })?)
+        } else {
+            None
+        };
+
         Ok(ExecutionPlan {
             layers,
             config,
             embedding_weights,
             lm_head,
+            position_handler,
         })
     }
 
@@ -445,6 +474,7 @@ impl ExecutionPlan {
         kv_cache: Option<&mut KVCache>,
         layer_idx: usize,
     ) -> HipResult<DeviceTensor> {
+        tracing::debug!("forward_layer() layer={} starting", layer_idx);
         let input_shape = hidden_states.shape().dims();
         let _seq_len = input_shape[0];
         let _hidden_size = input_shape[1];
@@ -453,14 +483,17 @@ impl ExecutionPlan {
         let residual = hidden_states.clone();
 
         // Step 1: Pre-attention LayerNorm
+        tracing::debug!("forward_layer() layer={} step 1: pre-attention LayerNorm", layer_idx);
         let normed_hidden = self.layer_norm(
             backend,
             hidden_states,
             &layer_plan.norm1_weight,
             layer_plan.norm1_bias.as_ref(),
         )?;
+        tracing::debug!("forward_layer() layer={} step 1 complete", layer_idx);
 
         // Step 2: Self-attention
+        tracing::debug!("forward_layer() layer={} step 2: self-attention", layer_idx);
         let attention_output = self.self_attention(
             backend,
             &normed_hidden,
@@ -471,22 +504,27 @@ impl ExecutionPlan {
             kv_cache,
             layer_idx,
         )?;
+        tracing::debug!("forward_layer() layer={} step 2 complete", layer_idx);
 
         // Step 3: Add residual connection
+        tracing::debug!("forward_layer() layer={} step 3: add residual", layer_idx);
         let attention_with_residual = self.add_residual(backend, &attention_output, &residual)?;
 
         // Store attention output for second residual
         let attention_residual = attention_with_residual.clone();
 
         // Step 4: Pre-MLP LayerNorm
+        tracing::debug!("forward_layer() layer={} step 4: pre-MLP LayerNorm", layer_idx);
         let normed_attention = self.layer_norm(
             backend,
             &attention_with_residual,
             &layer_plan.norm2_weight,
             layer_plan.norm2_bias.as_ref(),
         )?;
+        tracing::debug!("forward_layer() layer={} step 4 complete", layer_idx);
 
         // Step 5: MLP (SwiGLU)
+        tracing::debug!("forward_layer() layer={} step 5: MLP SwiGLU", layer_idx);
         let mlp_output = self.mlp_swiglu(
             backend,
             &normed_attention,
@@ -494,9 +532,12 @@ impl ExecutionPlan {
             &layer_plan.mlp_up_proj,
             &layer_plan.mlp_down_proj,
         )?;
+        tracing::debug!("forward_layer() layer={} step 5 complete", layer_idx);
 
         // Step 6: Add residual connection
+        tracing::debug!("forward_layer() layer={} step 6: add residual", layer_idx);
         let final_output = self.add_residual(backend, &mlp_output, &attention_residual)?;
+        tracing::debug!("forward_layer() layer={} complete", layer_idx);
 
         Ok(final_output)
     }
@@ -547,8 +588,58 @@ impl ExecutionPlan {
         let qkv_proj = self.matmul(backend, hidden_states, qkv_weight, qkv_bias)?;
 
         // Step 2: Split Q, K, V directly on GPU
-        let (q_reshaped, k_reshaped, v_reshaped) =
+        let (mut q_reshaped, mut k_reshaped, v_reshaped) =
             self.extract_qkv_tensors(backend, &qkv_proj, seq_len, num_heads, head_dim)?;
+
+        // Step 3: Apply position encoding to Q and K tensors (FIX-1)
+        // This is critical for correct model behavior - RoPE adds positional information
+        if let Some(ref position_handler) = self.position_handler {
+            // Generate sequential position IDs: [0, 1, 2, ..., seq_len-1]
+            let position_ids: Vec<usize> = (0..seq_len).collect();
+
+            // Apply RoPE position embeddings to Q and K
+            // Use GPU method when available, otherwise use CPU fallback
+            #[cfg(feature = "rocm")]
+            {
+                let (q_with_pos, k_with_pos) = position_handler.apply_position_embeddings_device(
+                    q_reshaped.clone(),
+                    k_reshaped.clone(),
+                    &position_ids,
+                    num_heads,
+                ).map_err(|e| {
+                    HipError::GenericError(format!("Failed to apply position embeddings: {}", e))
+                })?;
+                q_reshaped = q_with_pos;
+                k_reshaped = k_with_pos;
+            }
+
+            #[cfg(not(feature = "rocm"))]
+            {
+                // CPU fallback: download tensors, apply RoPE, upload back
+                let q_host = q_reshaped.to_host_vec()
+                    .map_err(|e| HipError::GenericError(format!("Failed to download Q: {}", e)))?;
+                let k_host = k_reshaped.to_host_vec()
+                    .map_err(|e| HipError::GenericError(format!("Failed to download K: {}", e)))?;
+
+                let (q_with_pos, k_with_pos) = position_handler.apply_position_embeddings(
+                    q_host,
+                    k_host,
+                    &position_ids,
+                    num_heads,
+                ).map_err(|e| {
+                    HipError::GenericError(format!("Failed to apply position embeddings: {}", e))
+                })?;
+
+                // Upload position-encoded tensors back to GPU
+                let q_shape = TensorShape::from_dims(&[seq_len, num_heads, head_dim]);
+                q_reshaped = DeviceTensor::from_host_vec(backend, q_with_pos, q_shape)
+                    .map_err(|e| HipError::GenericError(format!("Failed to upload Q: {}", e)))?;
+
+                let k_shape = TensorShape::from_dims(&[seq_len, num_heads, head_dim]);
+                k_reshaped = DeviceTensor::from_host_vec(backend, k_with_pos, k_shape)
+                    .map_err(|e| HipError::GenericError(format!("Failed to upload K: {}", e)))?;
+            }
+        }
 
         // Step 4: Scaled dot-product attention (still CPU fallback for now)
         // TODO: Replace with GPU attention kernel
@@ -630,6 +721,13 @@ impl ExecutionPlan {
         // Create hipBLAS handle for matrix operations
         let blas_handle = HipBlasHandle::new().map_err(|e| {
             HipError::GenericError(format!("Failed to create hipBLAS handle: {}", e))
+        })?;
+
+        // CRITICAL: Associate hipBLAS handle with our HIP stream
+        // Without this, hipBLAS uses the default stream while our kernels use a custom stream,
+        // causing synchronization issues and hangs.
+        blas_handle.set_stream(backend.stream().as_ptr()).map_err(|e| {
+            HipError::GenericError(format!("Failed to set hipBLAS stream: {}", e))
         })?;
 
         // Perform matrix multiplication: input @ weight -> output
@@ -932,8 +1030,34 @@ impl ExecutionPlan {
             }
         }
 
+        // For models with tied embeddings (like Qwen2), use token_embd.weight as LM head
+        // This is a common optimization where the embedding and output layers share weights
+        if let Some(tensor) = gpu_tensors.get("token_embd.weight") {
+            let shape = tensor.shape().dims();
+
+            // Validate shape: should be [hidden_size, vocab_size] or [vocab_size, hidden_size]
+            if shape.len() != 2 {
+                return Err(HipError::GenericError(format!(
+                    "token_embd.weight should be 2D for tied embeddings, got {}D",
+                    shape.len()
+                )));
+            }
+
+            let expected = (config.hidden_size, config.vocab_size);
+            if shape[0] == expected.0 && shape[1] == expected.1 {
+                // Already in correct format [hidden_size, vocab_size]
+                return Ok(tensor.clone());
+            }
+
+            if shape[0] == expected.1 && shape[1] == expected.0 {
+                // Transpose from [vocab_size, hidden_size] to [hidden_size, vocab_size]
+                let transposed = Self::transpose_2d_tensor(backend, tensor)?;
+                return Ok(transposed);
+            }
+        }
+
         Err(HipError::GenericError(
-            "No LM head tensor found (tried: output.weight, lm_head.weight, logits.weight)"
+            "No LM head tensor found (tried: output.weight, lm_head.weight, logits.weight, token_embd.weight)"
                 .to_string(),
         ))
     }
@@ -950,7 +1074,7 @@ impl ExecutionPlan {
 
         let rows = shape[0];
         let cols = shape[1];
-        eprintln!("DEBUG: transpose_2d_tensor: shape=[{}, {}], size={} bytes",
+        tracing::debug!("transpose_2d_tensor: shape=[{}, {}], size={} bytes",
                  rows, cols, tensor.len() * std::mem::size_of::<f32>());
         let host = tensor.to_host_vec()?;
         let mut transposed = vec![0.0f32; host.len()];

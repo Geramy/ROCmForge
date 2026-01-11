@@ -1,5 +1,13 @@
-//! KV Cache for efficient GPU memory management during inference
-//! Fully GPU-resident with preallocated memory for max sequence length
+//! Simple KV Cache for efficient GPU memory management during inference
+//!
+//! This is a simple GPU-resident KV cache with preallocated memory.
+//!
+//! NOTE: This is a legacy/prototype implementation. For production use,
+//! see the paged KV cache at `crate::kv_cache::KvCache` which has:
+//! - PagedAttention support
+//! - LRU eviction
+//! - Block sharing between sequences
+//! - Better memory management
 
 use crate::backend::{DeviceTensor, HipBackend, HipError};
 use crate::loader::mmap_loader::TensorShape;
@@ -21,7 +29,10 @@ pub enum KVCacheError {
 
 pub type KVCacheResult<T> = Result<T, KVCacheError>;
 
-/// GPU-resident KV cache for transformer models
+/// Simple GPU-resident KV cache for transformer models
+///
+/// This is a legacy implementation with simple preallocated memory.
+/// For production use, see `crate::kv_cache::KvCache` (paged KV cache).
 #[derive(Debug)]
 pub struct KVCache {
     backend: HipBackend,
@@ -46,7 +57,7 @@ impl KVCache {
         head_dim: usize,
         max_seq_len: usize,
     ) -> KVCacheResult<Self> {
-        eprintln!("DEBUG: KVCache::new() called with layers={}, heads={}, head_dim={}, max_seq_len={}",
+        tracing::debug!("KVCache::new() called with layers={}, heads={}, head_dim={}, max_seq_len={}",
                  num_layers, num_heads, head_dim, max_seq_len);
         // Preallocate keys and values for all layers
         let mut keys = Vec::with_capacity(num_layers);
@@ -55,7 +66,7 @@ impl KVCache {
 
         for layer in 0..num_layers {
             if layer % 8 == 0 || layer == num_layers - 1 {
-                eprintln!("DEBUG: KVCache::new() allocating layer {}/{}", layer + 1, num_layers);
+                tracing::debug!("KVCache::new() allocating layer {}/{}", layer + 1, num_layers);
             }
             // Key/Value tensor shape: [max_seq_len, num_heads, head_dim]
             let kv_shape = TensorShape::from_dims(&[max_seq_len, num_heads, head_dim]);
@@ -69,7 +80,7 @@ impl KVCache {
             values.push(value_tensor);
         }
 
-        eprintln!("DEBUG: KVCache::new() completed all {} layers, returning KVCache", num_layers);
+        tracing::debug!("KVCache::new() completed all {} layers, returning KVCache", num_layers);
         Ok(KVCache {
             backend: backend.clone(),
             num_layers,

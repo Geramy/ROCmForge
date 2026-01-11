@@ -57,8 +57,9 @@ impl MmapWeights {
 
     /// Get a typed f32 view of the data
     pub fn view_f32(&self, range: std::ops::Range<usize>) -> &[f32] {
-        let start_byte = range.start * 4;
-        let end_byte = range.end * 4;
+        // Use checked arithmetic to prevent overflow
+        let start_byte = range.start.checked_mul(4).unwrap_or(usize::MAX);
+        let end_byte = range.end.checked_mul(4).unwrap_or(usize::MAX);
 
         // Validate range bounds
         if start_byte > self.length || end_byte > self.length {
@@ -67,7 +68,7 @@ impl MmapWeights {
 
         // Ensure we don't go beyond available data
         let actual_end_byte = std::cmp::min(end_byte, self.length);
-        let actual_len = actual_end_byte - start_byte;
+        let actual_len = actual_end_byte.saturating_sub(start_byte);
 
         if actual_len == 0 {
             return &[];
@@ -135,7 +136,10 @@ impl TensorShape {
             let stride = if i == dims.len() - 1 {
                 1 // Last dimension has stride 1
             } else {
-                dims[i + 1..].iter().product()
+                // Use checked multiplication to prevent overflow
+                dims[i + 1..].iter().copied().fold(1usize, |acc, x| {
+                    acc.checked_mul(x).unwrap_or(usize::MAX)
+                })
             };
             strides.push(stride);
         }
@@ -161,7 +165,9 @@ impl TensorShape {
 
     /// Compute total number of elements
     pub fn total_elements(&self) -> usize {
-        self.dims.iter().product()
+        self.dims.iter().copied().fold(1usize, |acc, x| {
+            acc.checked_mul(x).unwrap_or(usize::MAX)
+        })
     }
 }
 

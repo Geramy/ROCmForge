@@ -85,6 +85,7 @@ mod rms_norm_tests {
 
         let result = unsafe {
             crate::mlp::kernels::rms_norm_gpu_kernel(
+                &backend,  // Pass backend to ensure stream consistency
                 input_gpu.as_ptr() as *const f32,
                 weight_gpu.as_ptr() as *const f32,
                 out_gpu.buffer().as_mut_ptr() as *mut f32,
@@ -145,6 +146,7 @@ mod rms_norm_tests {
 
         let result = unsafe {
             crate::mlp::kernels::rms_norm_gpu_kernel(
+                &backend,  // Pass backend to ensure stream consistency
                 input_gpu.as_ptr() as *const f32,
                 weight_gpu.as_ptr() as *const f32,
                 out_gpu.buffer().as_mut_ptr() as *mut f32,

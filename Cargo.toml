@@ -68,10 +68,10 @@ mockall = "0.12"
 [build-dependencies]
 cc = "1.0"
 
-# Benchmarks disabled (no benchmark files yet)
-# [[bench]]
-# name = "kv_cache_bench"
-# harness = false
+# Benchmarks
+[[bench]]
+name = "phase12_benchmark"
+harness = false
 
 [features]
 default = []

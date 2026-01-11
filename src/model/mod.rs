@@ -14,5 +14,8 @@ pub mod position_embedding_tests;
 pub use config::*;
 pub use execution_plan::*;
 pub use glm_position::*;
-pub use kv_cache::*;
 pub use simple_transformer::*;
+
+// NOTE: We do NOT re-export kv_cache::* here to avoid confusion with the paged KvCache.
+// The simple KVCache (model::kv_cache::KVCache) is legacy and should only be used in tests.
+// For production, use crate::kv_cache::KvCache (the paged implementation).

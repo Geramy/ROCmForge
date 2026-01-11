@@ -180,19 +180,19 @@ impl MultiQueryAttention {
         // For now, fallback to CPU implementation
         // TODO: Implement full GPU pipeline for MQA
         let q_host = q.to_host_vec().map_err(|e| {
-            AttentionError::DimensionError(format!("Failed to copy Q to host: {}", e))
+            AttentionError::MemoryCopy(format!("Failed to copy Q to host: {}", e))
         })?;
         let k_host = k.to_host_vec().map_err(|e| {
-            AttentionError::DimensionError(format!("Failed to copy K to host: {}", e))
+            AttentionError::MemoryCopy(format!("Failed to copy K to host: {}", e))
         })?;
         let v_host = v.to_host_vec().map_err(|e| {
-            AttentionError::DimensionError(format!("Failed to copy V to host: {}", e))
+            AttentionError::MemoryCopy(format!("Failed to copy V to host: {}", e))
         })?;
 
         let mask_host = mask
             .map(|m| {
                 m.to_host_vec().map_err(|e| {
-                    AttentionError::DimensionError(format!("Failed to copy mask to host: {}", e))
+                    AttentionError::MemoryCopy(format!("Failed to copy mask to host: {}", e))
                 })
             })
             .transpose()?;
@@ -207,11 +207,11 @@ impl MultiQueryAttention {
 
         // Convert output back to DeviceTensor
         let backend = HipBackend::new().map_err(|e| {
-            AttentionError::DimensionError(format!("Failed to create HIP backend: {}", e))
+            AttentionError::HandleCreation(format!("Failed to create HIP backend: {}", e))
         })?;
         let shape = q.shape().clone(); // Use same shape as query tensor
         DeviceTensor::from_host_vec(&backend, output, shape).map_err(|e| {
-            AttentionError::DimensionError(format!("Failed to create output tensor: {}", e))
+            AttentionError::MemoryAllocation(format!("Failed to create output tensor: {}", e))
         })
     }
 
@@ -401,6 +401,10 @@ impl MultiQueryAttention {
     }
 
     /// Apply attention mask
+    ///
+    /// Mask can be either:
+    /// - Broadcast shape: [batch_size, seq_len, kv_seq_len] - shared across all heads
+    /// - Full shape: [batch_size, seq_len, num_heads, kv_seq_len] - per-head masking
     fn apply_mask(
         &self,
         scores: &[f32],
@@ -412,25 +416,43 @@ impl MultiQueryAttention {
         let mut masked_scores = scores.to_vec();
 
         if let Some(mask_data) = mask {
-            if mask_data.len() != batch_size * seq_len * kv_seq_len {
-                return Err(AttentionError::ShapeMismatch(
-                    "Mask shape doesn't match attention scores".to_string(),
-                ));
+            let num_heads = self.config.num_query_heads;
+            let expected_broadcast = batch_size * seq_len * kv_seq_len;
+            let expected_full = batch_size * seq_len * num_heads * kv_seq_len;
+
+            // Validate mask shape - accept both broadcast and full shapes
+            if mask_data.len() != expected_broadcast && mask_data.len() != expected_full {
+                return Err(AttentionError::ShapeMismatch(format!(
+                    "Mask length {} does not match expected shapes: broadcast [B,S,KvS]={} or full [B,S,H,KvS]={}",
+                    mask_data.len(), expected_broadcast, expected_full
+                )));
             }
 
-            let num_heads = self.config.num_query_heads;
+            let is_broadcast_mask = mask_data.len() == expected_broadcast;
+
             for b in 0..batch_size {
                 for s in 0..seq_len {
                     for kv_s in 0..kv_seq_len {
-                        let mask_idx = b * seq_len * kv_seq_len + s * kv_seq_len + kv_s;
-                        let mask_val = mask_data[mask_idx];
-
                         // Apply mask to all heads
                         for h in 0..num_heads {
                             let score_idx = b * seq_len * num_heads * kv_seq_len
                                 + s * num_heads * kv_seq_len
                                 + h * kv_seq_len
                                 + kv_s;
+
+                            let mask_val = if is_broadcast_mask {
+                                // Broadcast mask: same value for all heads
+                                let mask_idx = b * seq_len * kv_seq_len + s * kv_seq_len + kv_s;
+                                mask_data[mask_idx]
+                            } else {
+                                // Full mask: per-head value
+                                let mask_idx = b * seq_len * num_heads * kv_seq_len
+                                    + s * num_heads * kv_seq_len
+                                    + h * kv_seq_len
+                                    + kv_s;
+                                mask_data[mask_idx]
+                            };
+
                             masked_scores[score_idx] += mask_val;
                         }
                     }
@@ -605,5 +627,69 @@ mod tests {
         // Verify output is not all zeros (computation happened)
         let non_zero_count = output.iter().filter(|&&x| x != 0.0).count();
         assert!(non_zero_count > 0);
+    }
+
+    #[test]
+    fn test_mask_broadcast_shape() {
+        // Test ATT-3 fix: broadcast mask shape [batch_size, seq_len, kv_seq_len]
+        let config = MultiQueryConfig::new(2, 4); // 2 query heads, 1 KV head, dim 4
+        let mqa = MultiQueryAttention::new(config).unwrap();
+
+        let q = vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0];
+        let k = vec![0.1, 0.2, 0.3, 0.4];
+        let v = vec![1.0, 2.0, 3.0, 4.0];
+
+        // Broadcast mask: [batch_size=1, seq_len=1, kv_seq_len=1] = [1]
+        let mask_broadcast = vec![0.0]; // No masking
+
+        let output = mqa.forward(&q, &k, &v, None, Some(&mask_broadcast)).unwrap();
+        assert_eq!(output.len(), q.len());
+
+        // Verify computation happened
+        let non_zero_count = output.iter().filter(|&&x| x != 0.0).count();
+        assert!(non_zero_count > 0);
+    }
+
+    #[test]
+    fn test_mask_full_shape() {
+        // Test ATT-3 fix: full mask shape [batch_size, seq_len, num_heads, kv_seq_len]
+        let config = MultiQueryConfig::new(2, 4); // 2 query heads, 1 KV head, dim 4
+        let mqa = MultiQueryAttention::new(config).unwrap();
+
+        let q = vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0];
+        let k = vec![0.1, 0.2, 0.3, 0.4];
+        let v = vec![1.0, 2.0, 3.0, 4.0];
+
+        // Full mask: [batch_size=1, seq_len=1, num_heads=2, kv_seq_len=1] = [2]
+        let mask_full = vec![0.0, 0.0]; // No masking for either head
+
+        let output = mqa.forward(&q, &k, &v, None, Some(&mask_full)).unwrap();
+        assert_eq!(output.len(), q.len());
+
+        // Verify computation happened
+        let non_zero_count = output.iter().filter(|&&x| x != 0.0).count();
+        assert!(non_zero_count > 0);
+    }
+
+    #[test]
+    fn test_mask_invalid_shape() {
+        // Test ATT-3 fix: invalid mask shape should produce clear error
+        let config = MultiQueryConfig::new(2, 4); // 2 query heads, 1 KV head, dim 4
+        let mqa = MultiQueryAttention::new(config).unwrap();
+
+        let q = vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0];
+        let k = vec![0.1, 0.2, 0.3, 0.4];
+        let v = vec![1.0, 2.0, 3.0, 4.0];
+
+        // Invalid mask: wrong size (should be 1 for broadcast or 2 for full)
+        let mask_invalid = vec![0.0, 0.0, 0.0]; // 3 elements - neither valid shape
+
+        let result = mqa.forward(&q, &k, &v, None, Some(&mask_invalid));
+        assert!(result.is_err());
+
+        // Verify error message mentions both expected shapes
+        let err_msg = result.unwrap_err().to_string();
+        assert!(err_msg.contains("Mask length"));
+        assert!(err_msg.contains("broadcast") || err_msg.contains("full"));
     }
 }
