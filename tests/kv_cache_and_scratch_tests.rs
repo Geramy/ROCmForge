@@ -4,8 +4,6 @@
 #[cfg(feature = "rocm")]
 use serial_test::serial;
 #[cfg(feature = "rocm")]
-use rocmforge::backend::scratch::ScratchBufferManager;
-#[cfg(feature = "rocm")]
 use rocmforge::backend::ScratchBufferManager;
 #[cfg(feature = "rocm")]
 use rocmforge::backend::{DeviceTensor, HipBackend, ModelRuntime};

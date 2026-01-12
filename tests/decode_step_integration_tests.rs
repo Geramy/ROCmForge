@@ -207,7 +207,7 @@ mod tests {
         let mut runtime = ModelRuntime::new_with_config(config.clone()).unwrap();
 
         // Set the execution plan
-        runtime.set_execution_plan(execution_plan);
+        runtime.set_execution_plan(execution_plan).unwrap();
 
         // Create input token embedding (simulate token id 42)
         let input_shape = TensorShape::from_dims(&[config.hidden_size]);
@@ -220,10 +220,7 @@ mod tests {
         input_tensor.buffer().copy_from_host(&test_input).unwrap();
 
         // Run decode_step
-        let result = runtime.decode_step(&input_tensor);
-        assert!(result.is_ok(), "decode_step failed: {:?}", result);
-
-        let output_tensor = result.unwrap();
+        let output_tensor = runtime.decode_step(&input_tensor).unwrap();
 
         // Verify output shape aligns with vocab size (logits)
         assert_eq!(output_tensor.shape().dims(), &[config.vocab_size]);
@@ -303,7 +300,7 @@ mod tests {
         .unwrap();
 
         let mut runtime_gpu = ModelRuntime::new_with_config(config.clone()).unwrap();
-        runtime_gpu.set_execution_plan(execution_plan.clone());
+        runtime_gpu.set_execution_plan(execution_plan.clone()).unwrap();
 
         let input_tensor_gpu = DeviceTensor::empty(&backend, input_shape.clone()).unwrap();
         input_tensor_gpu
@@ -311,14 +308,7 @@ mod tests {
             .copy_from_host(&test_input)
             .unwrap();
 
-        let gpu_result = runtime_gpu.decode_step(&input_tensor_gpu);
-        assert!(
-            gpu_result.is_ok(),
-            "GPU decode_step failed: {:?}",
-            gpu_result
-        );
-
-        let gpu_output = gpu_result.unwrap();
+        let gpu_output = runtime_gpu.decode_step(&input_tensor_gpu).unwrap();
         assert_eq!(
             gpu_output.shape().dims(),
             &[config.vocab_size],
@@ -395,7 +385,7 @@ mod tests {
 
         // Create runtime
         let mut runtime = ModelRuntime::new_with_config(config.clone()).unwrap();
-        runtime.set_execution_plan(execution_plan);
+        runtime.set_execution_plan(execution_plan).unwrap();
 
         // First token
         let input_shape = TensorShape::from_dims(&[config.hidden_size]);
