@@ -1502,6 +1502,22 @@ impl GgufLoader {
             }
             "glm.vocab_size" => self.metadata.vocab_size = value.parse().unwrap_or(0),
             "glm.rms_norm_eps" => self.metadata.rms_norm_eps = value.parse().unwrap_or(1e-6),
+            // Gemma 3-specific keys (actual keys from GGUF file)
+            "gemma3.embedding_length" => self.metadata.hidden_size = value.parse().unwrap_or(0),
+            "gemma3.block_count" => self.metadata.num_layers = value.parse().unwrap_or(0),
+            "gemma3.feed_forward_length" => self.metadata.intermediate_size = value.parse().unwrap_or(0),
+            "gemma3.attention.head_count" => self.metadata.num_heads = value.parse().unwrap_or(0),
+            "gemma3.attention.head_count_kv" => {
+                self.metadata.num_kv_heads = Some(value.parse().unwrap_or(0))
+            }
+            "gemma3.attention.key_length" => self.metadata.head_dim = value.parse().unwrap_or(0),
+            "gemma3.attention.value_length" => self.metadata.head_dim = value.parse().unwrap_or(0), // Same as key_length
+            "gemma3.context_length" => {
+                self.metadata.max_position_embeddings = value.parse().unwrap_or(2048)
+            }
+            "gemma3.attention.layer_norm_rms_epsilon" => {
+                self.metadata.rms_norm_eps = value.parse().unwrap_or(1e-6)
+            }
             // Qwen2-specific keys
             "qwen2.block_count" => self.metadata.num_layers = value.parse().unwrap_or(0),
             "qwen2.attention.head_count" => self.metadata.num_heads = value.parse().unwrap_or(0),
@@ -1547,7 +1563,8 @@ impl GgufLoader {
                     self.metadata.embedded_tokenizer_json = Some(value.to_string());
                 }
             }
-            _ => {} // Ignore unknown keys
+            // Ignore unknown keys
+            _ => {}
         }
     }
 
