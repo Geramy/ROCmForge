@@ -300,7 +300,7 @@ mod tests {
         .unwrap();
 
         let mut runtime_gpu = ModelRuntime::new_with_config(config.clone()).unwrap();
-        runtime_gpu.set_execution_plan(execution_plan.clone());
+        runtime_gpu.set_execution_plan(execution_plan.clone()).unwrap();
 
         let input_tensor_gpu = DeviceTensor::empty(&backend, input_shape.clone()).unwrap();
         input_tensor_gpu
