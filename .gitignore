@@ -136,3 +136,4 @@ src.zip
 *.hsaco
 *.hipfb
 target/debug/build/*/out/
+/models/

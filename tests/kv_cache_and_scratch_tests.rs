@@ -2,6 +2,8 @@
 //! Tests must fail initially, then pass after implementation
 
 #[cfg(feature = "rocm")]
+use serial_test::serial;
+#[cfg(feature = "rocm")]
 use rocmforge::backend::scratch::ScratchBufferManager;
 #[cfg(feature = "rocm")]
 use rocmforge::backend::ScratchBufferManager;
@@ -16,13 +18,16 @@ use rocmforge::model::ModelConfig;
 
 #[cfg(feature = "rocm")]
 #[test]
+#[serial]
 fn scratch_buffer_reuse_invariant() {
     // Test that scratch buffers are reused without reallocation
-    let backend = HipBackend::new().expect("Failed to create HIP backend");
+    let fixture = rocmforge::GPU_FIXTURE.as_ref()
+        .expect("GPU not available - test skipped");
+    let backend = fixture.backend();
 
     // Create scratch buffer manager with typical LLaMA-7B config
     let mut scratch = ScratchBufferManager::new(
-        &backend, 32,   // num_heads
+        backend, 32,   // num_heads
         4096, // hidden_size
         128,  // head_dim
         2048, // max_seq_len
@@ -88,17 +93,23 @@ fn scratch_buffer_reuse_invariant() {
         softmax_temp_2.as_ptr() as usize,
         "Softmax temp should use same memory address"
     );
+
+    // Check for memory leaks
+    fixture.assert_no_leak(5);
 }
 
 #[cfg(feature = "rocm")]
 #[test]
+#[serial]
 fn kv_cache_append_and_retrieve_consistency() {
     // Test KV cache append and retrieve operations
-    let backend = HipBackend::new().expect("Failed to create HIP backend");
+    let fixture = rocmforge::GPU_FIXTURE.as_ref()
+        .expect("GPU not available - test skipped");
+    let backend = fixture.backend();
 
     // Create KV cache with typical LLaMA-7B config
     let mut kv_cache = KVCache::new(
-        &backend, 32,   // num_layers
+        backend, 32,   // num_layers
         32,   // num_heads
         128,  // head_dim
         2048, // max_seq_len
@@ -112,9 +123,9 @@ fn kv_cache_append_and_retrieve_consistency() {
     let key_data = vec![1.0f32; 1 * 32 * 128];
     let value_data = vec![2.0f32; 1 * 32 * 128];
 
-    let key_tensor = DeviceTensor::from_host_vec(&backend, key_data.clone(), key_shape)
+    let key_tensor = DeviceTensor::from_host_vec(backend, key_data.clone(), key_shape)
         .expect("Failed to create key tensor");
-    let value_tensor = DeviceTensor::from_host_vec(&backend, value_data.clone(), value_shape)
+    let value_tensor = DeviceTensor::from_host_vec(backend, value_data.clone(), value_shape)
         .expect("Failed to create value tensor");
 
     // Append to KV cache
@@ -166,17 +177,23 @@ fn kv_cache_append_and_retrieve_consistency() {
         retrieved_value_host[0], 2.0,
         "Retrieved value should match stored value"
     );
+
+    // Check for memory leaks
+    fixture.assert_no_leak(5);
 }
 
 #[cfg(feature = "rocm")]
 #[test]
+#[serial]
 fn kv_cache_capacity_boundary() {
     // Test KV cache capacity limits
-    let backend = HipBackend::new().expect("Failed to create HIP backend");
+    let fixture = rocmforge::GPU_FIXTURE.as_ref()
+        .expect("GPU not available - test skipped");
+    let backend = fixture.backend();
 
     // Create KV cache with small max_seq_len for testing
     let mut kv_cache = KVCache::new(
-        &backend, 2,  // num_layers
+        backend, 2,  // num_layers
         4,  // num_heads
         64, // head_dim
         2,  // max_seq_len (small for testing)
@@ -190,9 +207,9 @@ fn kv_cache_capacity_boundary() {
     let key_data = vec![1.0f32; 1 * 4 * 64];
     let value_data = vec![2.0f32; 1 * 4 * 64];
 
-    let key_tensor = DeviceTensor::from_host_vec(&backend, key_data, key_shape)
+    let key_tensor = DeviceTensor::from_host_vec(backend, key_data, key_shape)
         .expect("Failed to create key tensor");
-    let value_tensor = DeviceTensor::from_host_vec(&backend, value_data, value_shape)
+    let value_tensor = DeviceTensor::from_host_vec(backend, value_data, value_shape)
         .expect("Failed to create value tensor");
 
     // Append up to capacity (should succeed)
@@ -214,10 +231,14 @@ fn kv_cache_capacity_boundary() {
         "Error should mention capacity: {}",
         error_string
     );
+
+    // Check for memory leaks
+    fixture.assert_no_leak(5);
 }
 
 #[cfg(feature = "rocm")]
 #[test]
+#[serial]
 fn model_runtime_initialization_consistency() {
     // Test ModelRuntime creates both KV cache and scratch buffers
     let model_config = ModelConfig {
@@ -314,4 +335,6 @@ fn model_runtime_initialization_consistency() {
         expected_layernorm_size * 4,
         "Layernorm temp should be GPU-resident"
     );
+
+    // Note: ModelRuntime creates its own backend, so we can't check for leaks here
 }

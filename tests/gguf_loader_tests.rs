@@ -2,6 +2,7 @@
 //!
 //! Test suite for GGUF file parsing and tensor loading functionality.
 
+use serial_test::serial;
 use std::collections::HashMap;
 use std::fs;
 use std::io::Write;
@@ -162,6 +163,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_gpu_tensor_upload() -> anyhow::Result<()> {
         let temp_dir = tempdir()?;
         let gguf_path = temp_dir.path().join("test_model.gguf");
@@ -170,7 +172,9 @@ mod tests {
         create_minimal_gguf_file(&gguf_path)?;
 
         // Load and upload to GPU
-        let backend = HipBackend::new()?;
+        let fixture = rocmforge::GPU_FIXTURE.as_ref()
+            .expect("GPU not available - test skipped");
+        let backend = fixture.backend();
         let loader = GgufLoader::new(&gguf_path.to_string_lossy())?;
         let tensors = loader.load_to_gpu(&backend)?;
 
@@ -189,6 +193,9 @@ mod tests {
                 name
             );
         }
+
+        // Check for memory leaks
+        fixture.assert_no_leak(5);
 
         Ok(())
     }

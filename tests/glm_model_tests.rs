@@ -3,6 +3,7 @@
 //! Test suite for GLM model loading and inference functionality.
 
 use std::fs;
+use serial_test::serial;
 use std::io::Write;
 use std::path::Path;
 
@@ -154,7 +155,9 @@ mod tests {
         create_synthetic_glm_model(&model_path)?;
 
         // Load model
-        let backend = HipBackend::new()?;
+        let fixture = rocmforge::GPU_FIXTURE.as_ref()
+        .expect("GPU not available - test skipped");
+    let backend = fixture.backend();
         let loader = GgufLoader::new(&model_path.to_string_lossy())?;
         let config = loader.to_model_config()?;
         let execution_plan = ExecutionPlan::from_gguf(&backend, &loader)?;
@@ -193,7 +196,9 @@ mod tests {
         create_synthetic_glm_model(&model_path)?;
 
         // Load model
-        let backend = HipBackend::new()?;
+        let fixture = rocmforge::GPU_FIXTURE.as_ref()
+        .expect("GPU not available - test skipped");
+    let backend = fixture.backend();
         let loader = GgufLoader::new(&model_path.to_string_lossy())?;
         let config = loader.to_model_config()?;
         let execution_plan = ExecutionPlan::from_gguf(&backend, &loader)?;
@@ -204,7 +209,7 @@ mod tests {
         // Create input tensor (single token)
         let input_shape = rocmforge::loader::TensorShape::from_dims(&[1, 512]); // [seq_len=1, hidden_size]
         let mut input_data = vec![0.1f32; 512]; // Simple test input
-        let input_tensor = DeviceTensor::from_host_vec(&backend, input_data, input_shape)?;
+        let input_tensor = DeviceTensor::from_host_vec(backend, input_data, input_shape)?;
 
         // Run decode step
         let output = runtime.decode_step(&input_tensor)?;
@@ -234,7 +239,9 @@ mod tests {
         create_synthetic_glm_model(&model_path)?;
 
         // Load model
-        let backend = HipBackend::new()?;
+        let fixture = rocmforge::GPU_FIXTURE.as_ref()
+        .expect("GPU not available - test skipped");
+    let backend = fixture.backend();
         let loader = GgufLoader::new(&model_path.to_string_lossy())?;
         let execution_plan = ExecutionPlan::from_gguf(&backend, &loader)?;
 
@@ -267,7 +274,9 @@ mod tests {
         create_synthetic_glm_model(&model_path)?;
 
         // Load model
-        let backend = HipBackend::new()?;
+        let fixture = rocmforge::GPU_FIXTURE.as_ref()
+        .expect("GPU not available - test skipped");
+    let backend = fixture.backend();
         let loader = GgufLoader::new(&model_path.to_string_lossy())?;
         let config = loader.to_model_config()?;
 
@@ -291,7 +300,9 @@ mod tests {
         create_synthetic_glm_model(&model_path)?;
 
         // Load model
-        let backend = HipBackend::new()?;
+        let fixture = rocmforge::GPU_FIXTURE.as_ref()
+        .expect("GPU not available - test skipped");
+    let backend = fixture.backend();
         let loader = GgufLoader::new(&model_path.to_string_lossy())?;
         let execution_plan = ExecutionPlan::from_gguf(&backend, &loader)?;
 
@@ -318,7 +329,9 @@ mod tests {
         create_synthetic_glm_model(&model_path)?;
 
         // Load model
-        let backend = HipBackend::new()?;
+        let fixture = rocmforge::GPU_FIXTURE.as_ref()
+        .expect("GPU not available - test skipped");
+    let backend = fixture.backend();
         let loader = GgufLoader::new(&model_path.to_string_lossy())?;
         let config = loader.to_model_config()?;
         let execution_plan = ExecutionPlan::from_gguf(&backend, &loader)?;
@@ -330,7 +343,7 @@ mod tests {
         for seq_len in [1, 2, 4, 8] {
             let input_shape = rocmforge::loader::TensorShape::from_dims(&[seq_len, 512]);
             let input_data = vec![0.1f32; seq_len * 512];
-            let input_tensor = DeviceTensor::from_host_vec(&backend, input_data, input_shape)?;
+            let input_tensor = DeviceTensor::from_host_vec(backend, input_data, input_shape)?;
 
             let output = runtime.decode_step(&input_tensor)?;
 

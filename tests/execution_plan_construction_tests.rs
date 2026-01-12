@@ -5,19 +5,23 @@
 //! using the helper functions for weight mapping.
 
 use rocmforge::backend::{DeviceTensor, HipBackend};
+use serial_test::serial;
 use rocmforge::loader::gguf::GgufLoader;
 use rocmforge::model::{ExecutionPlan, LayerPlan, ModelConfig};
 use std::collections::HashMap;
 
 /// Test execution plan construction from GGUF
 #[test]
+#[serial]
 fn test_execution_plan_construction() {
     // Load tiny model GGUF using correct API
     let gguf_path = "tests/data/tiny_model.gguf";
     let gguf_loader = GgufLoader::new(gguf_path).expect("Failed to load GGUF");
 
     // Create backend (this will be used for GPU tensor creation)
-    let backend = HipBackend::new().expect("Failed to create HIP backend");
+    let fixture = rocmforge::GPU_FIXTURE.as_ref()
+        .expect("GPU not available - test skipped");
+    let backend = fixture.backend();
 
     // Construct ExecutionPlan from GGUF loader
     let execution_plan = ExecutionPlan::from_gguf(&backend, &gguf_loader)
@@ -32,14 +36,19 @@ fn test_execution_plan_construction() {
     );
 
     println!("✅ Execution plan construction test passed");
+        // Check for memory leaks
+        fixture.assert_no_leak(5);
 }
 
 /// Test layer weight shapes
 #[test]
+#[serial]
 fn test_layer_weight_shapes() {
     let gguf_path = "tests/data/tiny_model.gguf";
     let gguf_loader = GgufLoader::new(gguf_path).expect("Failed to load GGUF");
-    let backend = HipBackend::new().expect("Failed to create HIP backend");
+    let fixture = rocmforge::GPU_FIXTURE.as_ref()
+        .expect("GPU not available - test skipped");
+    let backend = fixture.backend();
 
     let execution_plan = ExecutionPlan::from_gguf(&backend, &gguf_loader)
         .expect("Failed to construct ExecutionPlan");
@@ -101,6 +110,8 @@ fn test_layer_weight_shapes() {
             "Layer {}: LN1 weight dim",
             layer_idx
         );
+        // Check for memory leaks
+        fixture.assert_no_leak(5);
     }
 
     println!("✅ Layer weight shapes test passed");
@@ -108,10 +119,13 @@ fn test_layer_weight_shapes() {
 
 /// Test that all required tensors are present
 #[test]
+#[serial]
 fn test_all_required_tensors_present() {
     let gguf_path = "tests/data/tiny_model.gguf";
     let gguf_loader = GgufLoader::new(gguf_path).expect("Failed to load GGUF");
-    let backend = HipBackend::new().expect("Failed to create HIP backend");
+    let fixture = rocmforge::GPU_FIXTURE.as_ref()
+        .expect("GPU not available - test skipped");
+    let backend = fixture.backend();
 
     let execution_plan = ExecutionPlan::from_gguf(&backend, &gguf_loader)
         .expect("Failed to construct ExecutionPlan");
@@ -156,6 +170,8 @@ fn test_all_required_tensors_present() {
             "Layer {}: Norm2 weight should be present",
             layer_idx
         );
+        // Check for memory leaks
+        fixture.assert_no_leak(5);
     }
 
     println!("✅ All required tensors present test passed");

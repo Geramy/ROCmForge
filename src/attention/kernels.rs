@@ -41,6 +41,8 @@ struct KernelCache {
     flash_attention_causal_kernel: Option<HipKernel>,
     flash_attention_module: Option<HipModule>,
     flash_attention_kernel: Option<HipKernel>,
+    mqa_kv_replicate_module: Option<HipModule>,
+    mqa_kv_replicate_kernel: Option<HipKernel>,
 }
 
 // Global kernel cache (lazy initialization)
@@ -200,6 +202,18 @@ fn get_or_init_cache() -> Result<&'static Mutex<Option<KernelCache>>, HipError> 
     let flash_attention_module = backend.load_module(&flash_attention_path)?;
     let flash_attention_kernel = backend.get_kernel_function(&flash_attention_module, "flash_attention_kernel")?;
 
+    // Load MQA KV replication kernel
+    let mqa_kv_replicate_path = std::env::var("MQA_KV_REPLICATE_HSACO")
+        .ok()
+        .ok_or_else(|| HipError::KernelLoadFailed("MQA_KV_REPLICATE_HSACO env var not set".to_string()))?;
+
+    if !Path::new(&mqa_kv_replicate_path).exists() {
+        return Err(HipError::KernelLoadFailed(format!("HSACO not found: {}", mqa_kv_replicate_path)));
+    }
+
+    let mqa_kv_replicate_module = backend.load_module(&mqa_kv_replicate_path)?;
+    let mqa_kv_replicate_kernel = backend.get_kernel_function(&mqa_kv_replicate_module, "mqa_kv_replicate_fused_kernel")?;
+
     *cache = Some(KernelCache {
         backend,
         scale_module: Some(scale_module),
@@ -224,6 +238,8 @@ fn get_or_init_cache() -> Result<&'static Mutex<Option<KernelCache>>, HipError> 
         flash_attention_causal_kernel: Some(flash_attention_causal_kernel),
         flash_attention_module: Some(flash_attention_module),
         flash_attention_kernel: Some(flash_attention_kernel),
+        mqa_kv_replicate_module: Some(mqa_kv_replicate_module),
+        mqa_kv_replicate_kernel: Some(mqa_kv_replicate_kernel),
     });
 
     Ok(&GLOBAL_CACHE)
@@ -992,6 +1008,87 @@ pub unsafe fn position_embeddings_gpu_kernel(
             }
         }
         Err(_) => -1,
+    }
+}
+
+/// GPU kernel for KV head replication in MQA/GQA
+///
+/// Replicates K and V tensors from num_kv_heads to num_q_heads.
+/// Uses fused kernel for single-launch efficiency.
+///
+/// # Arguments
+/// * `k` - Input K tensor [batch_size, seq_len, num_kv_heads, head_dim]
+/// * `v` - Input V tensor [batch_size, seq_len, num_kv_heads, head_dim]
+/// * `k_expanded` - Output K tensor [batch_size, seq_len, num_q_heads, head_dim]
+/// * `v_expanded` - Output V tensor [batch_size, seq_len, num_q_heads, head_dim]
+/// * `batch_size` - Number of batches
+/// * `seq_len` - Sequence length
+/// * `num_kv_heads` - Number of KV heads
+/// * `num_q_heads` - Number of query heads
+/// * `head_dim` - Dimension per head
+///
+/// # Safety
+/// This function is unsafe because it calls HIP kernels directly.
+/// The caller must ensure that:
+/// - All pointers point to valid GPU memory
+/// - Output tensors have sufficient capacity
+/// - Dimensions are correct and consistent
+/// - No other threads are accessing the same memory concurrently
+#[cfg(feature = "rocm")]
+pub unsafe fn mqa_kv_replicate_gpu_kernel(
+    k: *const f32,
+    v: *const f32,
+    k_expanded: *mut f32,
+    v_expanded: *mut f32,
+    batch_size: u32,
+    seq_len: u32,
+    num_kv_heads: u32,
+    num_q_heads: u32,
+    head_dim: u32,
+) -> Result<(), String> {
+    match get_or_init_cache() {
+        Ok(cache_ref) => {
+            let cache = cache_ref.lock()
+                .map_err(|e| format!("GLOBAL_CACHE lock poisoned: {}", e))?;
+            let cache_ref = cache.as_ref()
+                .ok_or_else(|| "KernelCache not initialized".to_string())?;
+
+            let kernel = cache_ref.mqa_kv_replicate_kernel.as_ref()
+                .ok_or_else(|| "mqa_kv_replicate_kernel not loaded".to_string())?;
+            let backend = &cache_ref.backend;
+
+            // Calculate grid dimensions
+            let total_elements = batch_size * seq_len * num_q_heads * head_dim;
+            let grid_dim = (total_elements.div_ceil(BLOCK_SIZE), 1, 1);
+            let block_dim = (BLOCK_SIZE, 1, 1);
+
+            // Prepare kernel arguments
+            let mut k_arg = k as *mut f32;
+            let mut v_arg = v as *mut f32;
+            let mut k_expanded_arg = k_expanded;
+            let mut v_expanded_arg = v_expanded;
+            let mut batch_size_arg = batch_size;
+            let mut seq_len_arg = seq_len;
+            let mut num_kv_heads_arg = num_kv_heads;
+            let mut num_q_heads_arg = num_q_heads;
+            let mut head_dim_arg = head_dim;
+
+            let args: &[*mut c_void] = &[
+                &mut k_arg as *mut _ as *mut c_void,
+                &mut v_arg as *mut _ as *mut c_void,
+                &mut k_expanded_arg as *mut _ as *mut c_void,
+                &mut v_expanded_arg as *mut _ as *mut c_void,
+                &mut batch_size_arg as *mut _ as *mut c_void,
+                &mut seq_len_arg as *mut _ as *mut c_void,
+                &mut num_kv_heads_arg as *mut _ as *mut c_void,
+                &mut num_q_heads_arg as *mut _ as *mut c_void,
+                &mut head_dim_arg as *mut _ as *mut c_void,
+            ];
+
+            backend.launch_kernel_with_module_shared(kernel, grid_dim, block_dim, args, 0)
+                .map_err(|e| format!("Kernel launch failed: {:?}", e))
+        }
+        Err(e) => Err(format!("Failed to get cache: {:?}", e)),
     }
 }
 

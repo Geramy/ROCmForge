@@ -365,14 +365,38 @@ async fn run_local_generate(
 ) -> anyhow::Result<()> {
     let engine = create_engine(gguf).await?;
     let prompt_tokens = tokenizer.encode(&params.prompt);
+
+    // BUG #3 FIX: Validate input parameters before use
     let max_tokens = params.max_tokens.unwrap_or(128);
+    if max_tokens == 0 {
+        anyhow::bail!("Invalid max_tokens: must be greater than 0");
+    }
+    if max_tokens > 8192 {
+        anyhow::bail!("Invalid max_tokens: {} exceeds maximum of 8192", max_tokens);
+    }
+
+    let temperature = params.temperature.unwrap_or(1.0);
+    if temperature < 0.0 {
+        anyhow::bail!("Invalid temperature: {} must be non-negative", temperature);
+    }
+
+    let top_k = params.top_k.unwrap_or(50);
+    if top_k == 0 {
+        anyhow::bail!("Invalid top_k: must be greater than 0");
+    }
+
+    let top_p = params.top_p.unwrap_or(0.9);
+    if top_p <= 0.0 || top_p > 1.0 {
+        anyhow::bail!("Invalid top_p: {} must be in range (0.0, 1.0]", top_p);
+    }
+
     let request_id = engine
         .submit_request(
             prompt_tokens,
             max_tokens,
-            params.temperature.unwrap_or(1.0),
-            params.top_k.unwrap_or(50),
-            params.top_p.unwrap_or(0.9),
+            temperature,
+            top_k,
+            top_p,
         )
         .await?;
 
@@ -404,7 +428,12 @@ async fn run_local_generate(
             println!("\n[request {} cancelled]", request_id);
         }
     }
+    // BUG #1 FIX: Explicit engine cleanup before dropping
+    // The inference loop task is spawned in run_inference_loop() and runs in the background.
+    // We call stop() to signal the loop to exit gracefully, then sleep briefly to allow
+    // the task to finish. This prevents GPU resource leaks from abruptly terminated tasks.
     engine.stop().await.ok();
+    tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
     Ok(())
 }
 
@@ -415,14 +444,38 @@ async fn run_local_stream(
 ) -> anyhow::Result<()> {
     let engine = create_engine(gguf).await?;
     let prompt_tokens = tokenizer.encode(&params.prompt);
+
+    // BUG #3 FIX: Validate input parameters before use
     let max_tokens = params.max_tokens.unwrap_or(128);
+    if max_tokens == 0 {
+        anyhow::bail!("Invalid max_tokens: must be greater than 0");
+    }
+    if max_tokens > 8192 {
+        anyhow::bail!("Invalid max_tokens: {} exceeds maximum of 8192", max_tokens);
+    }
+
+    let temperature = params.temperature.unwrap_or(1.0);
+    if temperature < 0.0 {
+        anyhow::bail!("Invalid temperature: {} must be non-negative", temperature);
+    }
+
+    let top_k = params.top_k.unwrap_or(50);
+    if top_k == 0 {
+        anyhow::bail!("Invalid top_k: must be greater than 0");
+    }
+
+    let top_p = params.top_p.unwrap_or(0.9);
+    if top_p <= 0.0 || top_p > 1.0 {
+        anyhow::bail!("Invalid top_p: {} must be in range (0.0, 1.0]", top_p);
+    }
+
     let request_id = engine
         .submit_request(
             prompt_tokens,
             max_tokens,
-            params.temperature.unwrap_or(1.0),
-            params.top_k.unwrap_or(50),
-            params.top_p.unwrap_or(0.9),
+            temperature,
+            top_k,
+            top_p,
         )
         .await?;
 
@@ -467,7 +520,12 @@ async fn run_local_stream(
             }
         }
     }
+    // BUG #1 FIX: Explicit engine cleanup before dropping
+    // The inference loop task is spawned in run_inference_loop() and runs in the background.
+    // We call stop() to signal the loop to exit gracefully, then sleep briefly to allow
+    // the task to finish. This prevents GPU resource leaks from abruptly terminated tasks.
     engine.stop().await.ok();
+    tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
     Ok(())
 }
 
@@ -478,8 +536,14 @@ async fn create_engine(gguf: &str) -> anyhow::Result<Arc<InferenceEngine>> {
     engine.start().await?;
 
     // Start inference loop in background - don't block on it!
-    // Note: run_inference_loop() internally spawns the task, so we don't spawn here
-    engine.run_inference_loop().await;
+    // CRITICAL FIX: Use external tokio::spawn() like HTTP server does
+    // This prevents race condition where requests are submitted before inference loop is ready
+    // See: src/http/server.rs:551-557 for the stable pattern
+    let engine_clone = engine.clone();
+    tokio::spawn(async move {
+        // Ignore errors on shutdown
+        let _ = engine_clone.run_inference_loop().await;
+    });
 
     Ok(engine)
 }

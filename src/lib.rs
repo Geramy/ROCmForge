@@ -46,8 +46,12 @@ pub use sampler::Sampler;
 pub use scheduler::Scheduler;
 pub use tensor::Tensor;
 
+// Public test utilities for integration testing
 #[cfg(test)]
-mod tests {
+pub use backend::gpu_test_common::*;
+
+#[cfg(test)]
+mod library_tests {
     use super::*;
 
     #[test]

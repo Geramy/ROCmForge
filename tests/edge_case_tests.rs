@@ -7,6 +7,7 @@
 //! for edge cases even if some may currently fail.
 
 use rocmforge::backend::HipBackend;
+use serial_test::serial;
 use rocmforge::kv_cache::{CacheConfig, KvCache, KvCacheError};
 
 // ============================================================================
@@ -14,10 +15,13 @@ use rocmforge::kv_cache::{CacheConfig, KvCache, KvCacheError};
 // ============================================================================
 
 #[test]
+#[serial]
 fn test_kv_cache_empty_initial_state() {
     // Test KV cache with no prior cached keys/values
     // Edge case: Cache should be properly initialized with zero state
-    let backend = HipBackend::new().unwrap();
+    let fixture = rocmforge::GPU_FIXTURE.as_ref()
+        .expect("GPU not available - test skipped");
+    let backend = fixture.backend();
     let config = CacheConfig::new(1024, 100, 32, 128, 24).unwrap();
     let cache = KvCache::new(config, backend).unwrap();
 
@@ -29,10 +33,13 @@ fn test_kv_cache_empty_initial_state() {
 }
 
 #[test]
+#[serial]
 fn test_kv_cache_single_token() {
     // Test KV cache with single token (minimum meaningful operation)
     // Edge case: Smallest non-zero allocation
-    let backend = HipBackend::new().unwrap();
+    let fixture = rocmforge::GPU_FIXTURE.as_ref()
+        .expect("GPU not available - test skipped");
+    let backend = fixture.backend();
     let config = CacheConfig::new(1024, 10, 4, 32, 2).unwrap();
     let mut cache = KvCache::new(config, backend).unwrap();
 
@@ -47,10 +54,13 @@ fn test_kv_cache_single_token() {
 }
 
 #[test]
+#[serial]
 fn test_kv_cache_eviction_at_capacity() {
     // Test KV cache behavior when reaching max capacity
     // Edge case: Boundary between acceptable and over-capacity
-    let backend = HipBackend::new().unwrap();
+    let fixture = rocmforge::GPU_FIXTURE.as_ref()
+        .expect("GPU not available - test skipped");
+    let backend = fixture.backend();
     let page_size = 4;
     let max_pages = 3; // Small cache for testing
     let config = CacheConfig::new(page_size, max_pages, 4, 32, 2).unwrap();
@@ -84,10 +94,13 @@ fn test_kv_cache_eviction_at_capacity() {
 }
 
 #[test]
+#[serial]
 fn test_kv_cache_cross_sequence_isolation() {
     // Test that different sequences are properly isolated in the cache
     // Edge case: Multiple concurrent sequences should not interfere
-    let backend = HipBackend::new().unwrap();
+    let fixture = rocmforge::GPU_FIXTURE.as_ref()
+        .expect("GPU not available - test skipped");
+    let backend = fixture.backend();
     let config = CacheConfig::new(1024, 100, 4, 32, 2).unwrap();
     let mut cache = KvCache::new(config, backend).unwrap();
 
@@ -106,10 +119,13 @@ fn test_kv_cache_cross_sequence_isolation() {
 }
 
 #[test]
+#[serial]
 fn test_kv_cache_sequence_reuse() {
     // Test that allocating for same sequence increases page count
     // Edge case: Same sequence ID with multiple allocations
-    let backend = HipBackend::new().unwrap();
+    let fixture = rocmforge::GPU_FIXTURE.as_ref()
+        .expect("GPU not available - test skipped");
+    let backend = fixture.backend();
     let config = CacheConfig::new(1024, 100, 4, 32, 2).unwrap();
     let mut cache = KvCache::new(config, backend).unwrap();
 
@@ -133,6 +149,7 @@ fn test_kv_cache_sequence_reuse() {
 // ============================================================================
 
 #[test]
+#[serial]
 fn test_cache_config_zero_page_size() {
     // Test edge case: page_size = 0 (invalid)
     let config = CacheConfig::new(0, 100, 32, 128, 24);
@@ -152,6 +169,7 @@ fn test_cache_config_zero_page_size() {
 }
 
 #[test]
+#[serial]
 fn test_cache_config_zero_max_pages() {
     // Test edge case: max_pages = 0 (invalid)
     let config = CacheConfig::new(1024, 0, 32, 128, 24);
@@ -171,6 +189,7 @@ fn test_cache_config_zero_max_pages() {
 }
 
 #[test]
+#[serial]
 fn test_cache_config_zero_heads() {
     // Test edge case: num_heads = 0 (invalid)
     let config = CacheConfig::new(1024, 100, 0, 128, 24);
@@ -190,6 +209,7 @@ fn test_cache_config_zero_heads() {
 }
 
 #[test]
+#[serial]
 fn test_cache_config_zero_head_dim() {
     // Test edge case: head_dim = 0 (invalid)
     let config = CacheConfig::new(1024, 100, 32, 0, 24);
@@ -209,6 +229,7 @@ fn test_cache_config_zero_head_dim() {
 }
 
 #[test]
+#[serial]
 fn test_cache_config_zero_layers() {
     // Test edge case: num_layers = 0 (invalid)
     let config = CacheConfig::new(1024, 100, 32, 128, 0);
@@ -228,6 +249,7 @@ fn test_cache_config_zero_layers() {
 }
 
 #[test]
+#[serial]
 fn test_cache_config_minimum_valid_values() {
     // Test edge case: All minimum valid values (1)
     // This tests the lower boundary of valid configurations
@@ -243,6 +265,7 @@ fn test_cache_config_minimum_valid_values() {
 }
 
 #[test]
+#[serial]
 fn test_cache_config_large_values() {
     // Test edge case: Large but still valid values
     // This tests the upper boundary before resource limits

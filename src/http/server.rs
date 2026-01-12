@@ -382,6 +382,7 @@ impl InferenceServer {
                                         finished: finished && current_len == last_idx + 1,
                                         finish_reason: finish_reason.clone().filter(|_| finished),
                                     })
+                                    // UNWRAP: TokenStream only contains simple serializable types
                                     .unwrap();
 
                                 let next_state = (

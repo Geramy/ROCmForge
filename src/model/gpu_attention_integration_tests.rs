@@ -16,6 +16,7 @@ mod gpu_attention_integration_tests {
         ModelConfig {
             num_hidden_layers: 2,
             num_attention_heads: 4,
+            num_kv_heads: Some(4),  // MHA for now
             head_dim: 32,  // 128 / 4
             hidden_size: 128,
             max_position_embeddings: 2048,

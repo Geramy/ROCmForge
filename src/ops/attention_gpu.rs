@@ -817,6 +817,7 @@ mod hiprtc {
             ));
         }
 
+        // UNWRAP: Static string literal without null bytes, always safe
         let option = CString::new("--std=c++17").unwrap();
         let options = [option.as_ptr()];
         let compile_result =

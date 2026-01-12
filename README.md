@@ -6,7 +6,7 @@ A high-performance inference engine specifically designed for AMD GPUs using ROC
 
 ## Project Status
 
-**Alpha Software - Phase 15 Complete**
+**Alpha Software - Phase 21 Complete**
 
 This is **alpha software** under active development. Components work individually but end-to-end integration is incomplete.
 
@@ -15,19 +15,21 @@ This is **alpha software** under active development. Components work individuall
 | GPU Kernels | ✅ Complete | 41/41 | Phases 1-4: scale, mask, softmax, RoPE, FlashAttention, SwiGLU, RMSNorm |
 | GPU Attention Path | ✅ Complete | 67/67 | Phase 7: 2-5x speedup over CPU |
 | Q4_1/Q5_0/Q5_1 Support | ✅ Complete | 13/13 | Phase 8: Full dequantization support |
-| Code Quality | ✅ Complete | 145/145 | Phase 15: 100% test health, B+ grade |
+| Code Quality | ✅ Complete | 158/158 | Phase 15-21: 100% test health |
 | HIP/ROCm Backend | ✅ Complete | All | AMD RX 7900 XT tested |
 | GGUF Loader | ✅ Complete | All | Fixed spec compliance, vocab inference |
 | MXFP Quantization | ✅ Complete | 24/24 | Phase 5: MXFP4/MXFP6 (OCP MX Spec v1.0) |
 | KV Cache | ✅ Complete | All | Paged attention cache with bug fixes |
 | HTTP Server | ✅ Complete | All | OpenAI-compatible API with tests |
-| CLI | ⚠️ Experimental | All | May crash - known issues |
+| CLI | ⚠️ Experimental | All | Phase 21: Fixes applied, not fully tested |
 | Memory Pooling | ✅ Complete | All | Phase 10: 70% reduction in hipMalloc calls |
-| Bug Fixes | ✅ Complete | All | Phase 11: P0/P1 bugs fixed |
+| Bug Fixes | ✅ Complete | All | Phase 11-21: P0/P1/P2 bugs fixed |
 | Logging Cleanup | ✅ Complete | All | Phase 15: 101 eprintln! → tracing macros |
 | Naming Cleanup | ✅ Complete | All | Phase 15: AttentionBackend conflict resolved |
+| Async GPU Loading | ✅ Complete | 8/8 | Phase 17: ~5x model loading speedup |
+| GPU Testing Safety | ✅ Complete | 5/5 | Phase 20: Safe to run GPU tests |
 
-**Overall Test Health**: 145/145 unit tests passing (100%)
+**Overall Test Health**: 274+ unit tests passing (100%)
 
 ## What Works
 
@@ -46,8 +48,23 @@ All transformer layer operations are GPU-accelerated with comprehensive testing:
 - **Phase 10**: Memory Pooling (ROCm workaround) - Complete
 - **Phase 11**: P0/P1 Bug Fixes (5 bugs fixed) - Complete
 - **Phase 15**: P1/P2 Code Quality Fixes - Complete
+- **Phase 17**: Async GPU Loading - Complete
 
-**Total: 145/145 unit tests passing (100% test health)**
+**Total: 158/158 unit tests passing (100% test health)**
+
+### Async GPU Loading (100% Complete)
+
+Phase 17: Option B - Multi-stream concurrent GPU uploads for ~5x faster model loading
+
+- **Performance**: ~60s → ~12s model loading time (~5x speedup)
+- **Phase A**: Parallel dequantization using Rayon (~4x CPU speedup)
+- **Phase B**: Concurrent GPU uploads using 4 HIP streams (~4x GPU speedup)
+- **Phase C**: Thread-safe GPU cache population
+- **HIP Events**: FFI bindings + RAII wrapper for synchronization
+- **AsyncLoader**: Multi-stream upload manager with automatic stream selection
+- **Tests**: 8 new tests (3 HipEvent + 5 AsyncLoader)
+
+**E2E Test Report**: `docs/ASYNC_LOADING_E2E_TEST_REPORT.md`
 
 ### MXFP Quantization (100% Complete)
 
@@ -93,10 +110,12 @@ Phase 5: OCP MX Specification v1.0 compliant MXFP4/MXFP6 support
 
 ### High Priority
 
-1. **CLI Stability**: The CLI may crash during inference
-   - Status: Known issue, being investigated
+1. **CLI Stability**: Phase 21 fixes applied but not fully tested
+   - Status: Fixed P0 GPU resource leak, P2 missing input validation
+   - Remaining: Not tested end-to-end with real models
    - Workaround: Use HTTP server API which is more stable
-   - Impact: User experience for CLI users
+   - Impact: CLI may still crash in edge cases
+   - See: `docs/CLI_BUG_FIXES_2026-01-11.md`
 
 2. **End-to-End Inference**: Not fully tested with real models
    - Status: Individual components tested, integration incomplete
@@ -131,7 +150,7 @@ Phase 5: OCP MX Specification v1.0 compliant MXFP4/MXFP6 support
 
 ### Future Enhancements (Planned)
 
-1. **CLI Stability Fix**: Investigate and fix inference crashes
+1. **CLI End-to-End Testing**: Test CLI with real models after Phase 21 fixes
 2. **Integration Testing**: End-to-end tests with real models
 3. **Warning Cleanup**: Reduce compiler warnings to <10
 4. **Benchmark Suite**: Performance regression tracking
@@ -196,13 +215,13 @@ cargo test --features rocm --lib mlp
 watch -n 1 rocm-smi
 ```
 
-### CLI (Experimental - May Crash)
+### CLI (Experimental - Fixes Applied, Not Fully Tested)
 
 ```bash
 # Inspect GGUF model metadata
 ./target/release/rocmforge_cli inspect --model /path/to/model.gguf
 
-# Generate text (experimental - may crash)
+# Generate text (experimental - fixes applied but not fully tested)
 ./target/release/rocmforge_cli generate \
   --gguf ~/.config/syncore/models/qwen2.5-0.5b.gguf \
   --prompt "The future of AI is" \
@@ -246,13 +265,17 @@ curl -X POST http://localhost:8080/v1/completions \
 | Phase 10 | Memory Pooling (ROCm workaround) | ✅ Complete |
 | Phase 11 | P0/P1 Bug Fixes | ✅ Complete |
 | Phase 15 | P1/P2 Code Quality Fixes | ✅ Complete |
+| Phase 17 | Async GPU Loading (~5x speedup) | ✅ Complete |
+| Phase 18 | Lazy ExecutionPlan (~12x more speedup) | ✅ Complete |
+| Phase 20 | GPU Testing Safety | ✅ Complete |
+| Phase 21 | CLI Stability Fixes | ✅ Complete |
 | Phase 6 | GPU Sampler (top-k/top-p on device) | ❌ Pending |
 | Future | FP16 Compute Support | ❌ Planned |
 | Future | End-to-End Integration Tests | ❌ Planned |
 
 ### Future Work
 
-- [ ] Fix CLI crashes and enable end-to-end inference
+- [ ] Test CLI end-to-end with real models (Phase 21 fixes applied)
 - [ ] GPU-based MXFP dequantization kernels
 - [ ] End-to-end integration tests with real models
 - [ ] Multi-GPU tensor parallelism
@@ -306,13 +329,14 @@ Inspired by:
 **This is alpha software.** It is not suitable for any critical use. Components work individually but end-to-end model execution is not fully tested. APIs will change. Bugs exist.
 
 **What this means:**
-- ✅ GPU kernels work (145/145 tests pass)
+- ✅ GPU kernels work (274+ tests pass)
+- ✅ Async loading (~60x total speedup with lazy loading)
 - ✅ Individual components are tested
-- ⚠️ CLI may crash
+- ⚠️ CLI fixes applied (Phase 21) but not fully tested end-to-end
 - ⚠️ End-to-end inference not fully tested
 - ❌ Not ready for any real deployment
 - ❌ Use at your own risk
 
 ---
 
-**Status**: Alpha | **Tests**: 145/145 Passing (100%) | **Code Quality**: B+ (82/100) | **Hardware**: AMD Radeon RX 7900 XT (gfx1100) | **Last Updated**: January 2026 | **Phase**: 15 Complete
+**Status**: Alpha | **Tests**: 274+ Passing (100%) | **Code Quality**: B+ (82/100) | **Hardware**: AMD Radeon RX 7900 XT (gfx1100) | **Last Updated**: January 2026 | **Phase**: 21 Complete

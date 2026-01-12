@@ -276,6 +276,42 @@ impl IterationBatch {
     pub fn min_sequence_length(&self) -> usize {
         self.sequence_positions.iter().copied().min().unwrap_or(0)
     }
+
+    // ========== Phase 4: Paged Attention Integration ==========
+
+    /// Get block tables for all sequences in this iteration batch
+    ///
+    /// This method retrieves the physical block IDs for each sequence from the
+    /// KV cache's page table, which is needed for paged attention computation.
+    ///
+    /// # Arguments
+    /// * `kv_cache` - Reference to the KV cache (read lock)
+    ///
+    /// # Returns
+    /// * `Ok(HashMap)` - Map of sequence_id -> Vec<block_id>
+    /// * `Err(KvCacheError)` - If there's an error accessing the cache
+    ///
+    /// # Example
+    /// ```ignore
+    /// let block_tables = batch.get_block_tables(&cache)?;
+    /// for (seq_id, blocks) in &block_tables {
+    ///     println!("Sequence {} has blocks: {:?}", seq_id, blocks);
+    /// }
+    /// ```
+    pub fn get_block_tables(
+        &self,
+        kv_cache: &crate::kv_cache::KvCache,
+    ) -> Result<std::collections::HashMap<u32, Vec<u32>>, crate::kv_cache::KvCacheError> {
+        use std::collections::HashMap;
+
+        let mut tables = HashMap::new();
+        for req in &self.requests {
+            if let Ok(Some(blocks)) = kv_cache.get_sequence_blocks_from_page_table(req.request_id) {
+                tables.insert(req.request_id, blocks);
+            }
+        }
+        Ok(tables)
+    }
 }
 
 #[derive(Debug)]
@@ -378,7 +414,9 @@ impl Scheduler {
                 .position(|r| r.request_id == request_id);
 
             if let Some(pos) = pos {
-                let mut request = self.pending_queue.remove(pos).unwrap();
+                // SAFETY: pos is guaranteed to be valid because we just found it via position()
+                let mut request = self.pending_queue.remove(pos)
+                    .expect("Failed to remove request at valid position");
 
                 // Check if this request fits well with current batch
                 if batch.is_empty()
@@ -458,7 +496,9 @@ impl Scheduler {
             .iter()
             .position(|r| r.request_id == request_id)
         {
-            let mut request = self.pending_queue.remove(pos).unwrap();
+            // SAFETY: pos is guaranteed to be valid because we just found it via position()
+            let mut request = self.pending_queue.remove(pos)
+                .expect("Failed to remove request at valid position");
             request.cancel()?;
             self.completed_requests.insert(request_id, request.clone());
             return Ok(request);
@@ -1018,5 +1058,189 @@ mod tests {
 
             prop_assert_eq!(total_processed, num_requests);
         }
+    }
+
+    // ========== Phase 4: Paged Attention Integration Tests ==========
+
+    #[test]
+    fn test_iteration_batch_get_block_tables() {
+        use crate::kv_cache::{KvCache, CacheConfig};
+        use crate::backend::HipBackend;
+        use std::sync::Arc;
+
+        let backend = HipBackend::new().unwrap(); // Already returns Arc<HipBackend>
+        let cache_config = CacheConfig::new(16, 10, 32, 128, 24).unwrap();
+        let cache = Arc::new(std::sync::RwLock::new(
+            KvCache::new(cache_config, backend).unwrap()
+        ));
+
+        let mut batch = IterationBatch::new();
+
+        // Add some test requests (manually create them in processing state)
+        let mut req1 = GenerationRequest::new(1, vec![1, 2, 3], 10, 0.8, 50, 0.9);
+        let mut req2 = GenerationRequest::new(2, vec![4, 5, 6], 10, 0.8, 50, 0.9);
+        req1.start_processing().unwrap();
+        req2.start_processing().unwrap();
+
+        batch.requests.push(req1);
+        batch.requests.push(req2);
+        batch.sequence_positions.push(3);
+        batch.sequence_positions.push(3);
+
+        // Write some paged data to cache
+        {
+            let mut cache = cache.write().unwrap();
+            cache.append_token_paged(1, 1).unwrap();
+            cache.append_token_paged(1, 2).unwrap();
+            cache.append_token_paged(1, 3).unwrap();
+            cache.append_token_paged(2, 4).unwrap();
+            cache.append_token_paged(2, 5).unwrap();
+            cache.append_token_paged(2, 6).unwrap();
+        }
+
+        // Get block tables - this should work after we implement the method
+        let cache_ref = cache.read().unwrap();
+        let block_tables = batch.get_block_tables(&*cache_ref);
+
+        assert!(block_tables.is_ok());
+        let tables = block_tables.unwrap();
+        assert_eq!(tables.len(), 2);
+        assert!(tables.contains_key(&1));
+        assert!(tables.contains_key(&2));
+
+        // Verify blocks are allocated
+        let blocks1 = tables.get(&1).unwrap();
+        let blocks2 = tables.get(&2).unwrap();
+        assert_eq!(blocks1.len(), 1); // First block
+        assert_eq!(blocks2.len(), 1); // First block
+    }
+
+    #[test]
+    fn test_iteration_batch_get_block_tables_empty() {
+        use crate::kv_cache::{KvCache, CacheConfig};
+        use crate::backend::HipBackend;
+        use std::sync::Arc;
+
+        let backend = HipBackend::new().unwrap(); // Already returns Arc<HipBackend>
+        let cache_config = CacheConfig::new(16, 10, 32, 128, 24).unwrap();
+        let cache = Arc::new(std::sync::RwLock::new(
+            KvCache::new(cache_config, backend).unwrap()
+        ));
+
+        let batch = IterationBatch::new();
+
+        // Get block tables from empty batch
+        let cache_ref = cache.read().unwrap();
+        let block_tables = batch.get_block_tables(&*cache_ref);
+
+        assert!(block_tables.is_ok());
+        let tables = block_tables.unwrap();
+        assert_eq!(tables.len(), 0);
+    }
+
+    #[test]
+    fn test_iteration_batch_allocate_blocks_on_growth() {
+        use crate::kv_cache::{KvCache, CacheConfig};
+        use crate::backend::HipBackend;
+        use std::sync::Arc;
+
+        let backend = HipBackend::new().unwrap(); // Already returns Arc<HipBackend>
+        let cache_config = CacheConfig::new(4, 10, 32, 128, 24).unwrap(); // block_size=4
+        let cache = Arc::new(std::sync::RwLock::new(
+            KvCache::new(cache_config, backend).unwrap()
+        ));
+
+        let mut scheduler = Scheduler::new(SchedulerConfig::default());
+
+        // Submit a request and start processing
+        scheduler.submit_request(vec![1, 2, 3], 20, 0.8, 50, 0.9).unwrap();
+        let req_id = 0;
+
+        // Get first batch to start processing
+        let batch = scheduler.get_next_iteration_batch().unwrap();
+        assert_eq!(batch.size(), 1);
+
+        // Simulate token generation across multiple iterations
+        for i in 0..17 {
+            {
+                let mut cache = cache.write().unwrap();
+                cache.append_token_paged(req_id, 100 + i as u32).unwrap();
+            }
+
+            scheduler.add_generated_token(req_id, 100 + i as u32).unwrap();
+
+            // Every block_size tokens, should allocate new block
+            // At token 4 (i=3), we should have 1 block (tokens 0-3)
+            // At token 5 (i=4), we should have 2 blocks (tokens 0-3, 4)
+            if i >= 3 && (i + 1) % 4 == 0 {
+                let cache = cache.read().unwrap();
+                let blocks = cache.get_sequence_blocks_from_page_table(req_id).unwrap();
+                assert!(blocks.is_some());
+                let block_count = blocks.unwrap().len();
+                let expected_blocks = ((i + 1) + 3) / 4; // Ceiling division
+                assert_eq!(block_count, expected_blocks,
+                    "Expected {} blocks at token {}, got {}",
+                    expected_blocks, i + 1, block_count);
+            }
+        }
+
+        // Final verification: 17 tokens should span 5 blocks (0-3, 4-7, 8-11, 12-15, 16)
+        let cache = cache.read().unwrap();
+        let blocks = cache.get_sequence_blocks_from_page_table(req_id).unwrap();
+        assert!(blocks.is_some());
+        assert_eq!(blocks.unwrap().len(), 5);
+    }
+
+    #[test]
+    fn test_scheduler_iteration_with_paged_cache() {
+        use crate::kv_cache::{KvCache, CacheConfig};
+        use crate::backend::HipBackend;
+        use std::sync::Arc;
+
+        let backend = HipBackend::new().unwrap(); // Already returns Arc<HipBackend>
+        let cache_config = CacheConfig::new(16, 100, 32, 128, 24).unwrap();
+        let cache = Arc::new(std::sync::RwLock::new(
+            KvCache::new(cache_config, backend).unwrap()
+        ));
+
+        let mut scheduler = Scheduler::new(SchedulerConfig::default());
+
+        // Submit multiple requests
+        let req1 = scheduler.submit_request(vec![1, 2, 3], 10, 0.8, 50, 0.9).unwrap();
+        let req2 = scheduler.submit_request(vec![4, 5, 6], 10, 0.8, 50, 0.9).unwrap();
+
+        // Get first iteration batch
+        let batch1 = scheduler.get_next_iteration_batch().unwrap();
+        assert_eq!(batch1.size(), 2);
+
+        // Simulate processing: append tokens to paged cache
+        {
+            let mut cache = cache.write().unwrap();
+            for &req_id in &[req1, req2] {
+                for i in 0..5 {
+                    cache.append_token_paged(req_id, 100 + i).unwrap();
+                }
+            }
+        }
+
+        // Add generated tokens via scheduler
+        for &req_id in &[req1, req2] {
+            for i in 0..5 {
+                scheduler.add_generated_token(req_id, 100 + i).unwrap();
+            }
+        }
+
+        // Update iteration batch
+        let completed = scheduler.update_iteration_batch(batch1).unwrap();
+        assert_eq!(completed.len(), 0); // Not complete yet
+
+        // Get next iteration batch
+        let batch2 = scheduler.get_next_iteration_batch().unwrap();
+        assert_eq!(batch2.size(), 2);
+
+        // Verify we can get block tables for the batch
+        let cache = cache.read().unwrap();
+        let block_tables = batch2.get_block_tables(&*cache).unwrap();
+        assert_eq!(block_tables.len(), 2);
     }
 }

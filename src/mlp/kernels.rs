@@ -178,8 +178,10 @@ pub unsafe fn swiglu_gpu_kernel(
 ) -> Result<(), String> {
     match get_or_init_cache() {
         Ok(cache_ref) => {
-            let cache = cache_ref.lock().unwrap();
-            let cache_ref = cache.as_ref().unwrap();
+            let cache = cache_ref.lock()
+                .map_err(|e| format!("SwiGLU cache lock poisoned: {}", e))?;
+            let cache_ref = cache.as_ref()
+                .ok_or_else(|| "SwiGLU cache not initialized".to_string())?;
 
             let kernel = cache_ref.swiglu_kernel.as_ref()
                 .ok_or_else(|| "swiglu_kernel not loaded".to_string())?;
@@ -251,8 +253,10 @@ pub unsafe fn rms_norm_gpu_kernel(
 ) -> Result<(), String> {
     match get_or_init_cache() {
         Ok(cache_ref) => {
-            let cache = cache_ref.lock().unwrap();
-            let cache_ref = cache.as_ref().unwrap();
+            let cache = cache_ref.lock()
+                .map_err(|e| format!("RMSNorm cache lock poisoned: {}", e))?;
+            let cache_ref = cache.as_ref()
+                .ok_or_else(|| "RMSNorm cache not initialized".to_string())?;
 
             let kernel = cache_ref.rms_norm_kernel.as_ref()
                 .ok_or_else(|| "rms_norm_kernel not loaded".to_string())?;

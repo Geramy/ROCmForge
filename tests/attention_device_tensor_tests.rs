@@ -1,6 +1,8 @@
 //! Tests for attention mechanism with DeviceTensor integration
 
 #[cfg(feature = "rocm")]
+use serial_test::serial;
+#[cfg(feature = "rocm")]
 use rocmforge::attention::{Attention, AttentionBackend};
 #[cfg(feature = "rocm")]
 use rocmforge::backend::{DeviceTensor, HipBackend};
@@ -11,6 +13,7 @@ use std::io::Write;
 
 #[cfg(feature = "rocm")]
 #[test]
+#[serial]
 fn test_attention_device_tensor_basic() {
     // Create test data
     let dim = 2; // Small dimension for testing
@@ -34,7 +37,9 @@ fn test_attention_device_tensor_basic() {
     ];
 
     // Create DeviceTensors from host data
-    let backend = HipBackend::new().unwrap();
+    let fixture = rocmforge::GPU_FIXTURE.as_ref()
+        .expect("GPU not available - test skipped");
+    let backend = fixture.backend();
     let q_shape = TensorShape::from_dims(&[batch_size, seq_len, dim]);
     let k_shape = TensorShape::from_dims(&[batch_size, seq_len, dim]);
     let v_shape = TensorShape::from_dims(&[batch_size, seq_len, dim]);
@@ -44,7 +49,7 @@ fn test_attention_device_tensor_basic() {
         q_data.len(),
         q_shape
     );
-    let q_device = DeviceTensor::from_host_vec(&backend, q_data.clone(), q_shape).unwrap();
+    let q_device = DeviceTensor::from_host_vec(backend, q_data.clone(), q_shape).unwrap();
     println!(
         "DEBUG: Created Q device tensor: len() = {}, size() = {}, shape = {:?}",
         q_device.len(),
@@ -56,7 +61,7 @@ fn test_attention_device_tensor_basic() {
         k_data.len(),
         k_shape
     );
-    let k_device = DeviceTensor::from_host_vec(&backend, k_data.clone(), k_shape).unwrap();
+    let k_device = DeviceTensor::from_host_vec(backend, k_data.clone(), k_shape).unwrap();
     println!(
         "DEBUG: Created K device tensor: len() = {}, size() = {}, shape = {:?}",
         k_device.len(),
@@ -68,7 +73,7 @@ fn test_attention_device_tensor_basic() {
         v_data.len(),
         v_shape
     );
-    let v_device = DeviceTensor::from_host_vec(&backend, v_data.clone(), v_shape).unwrap();
+    let v_device = DeviceTensor::from_host_vec(backend, v_data.clone(), v_shape).unwrap();
     println!(
         "DEBUG: Created V device tensor: len() = {}, size() = {}, shape = {:?}",
         v_device.len(),
@@ -131,10 +136,14 @@ fn test_attention_device_tensor_basic() {
     for &val in &output_host {
         assert!(val.is_finite());
     }
+
+    // Check for memory leaks
+    fixture.assert_no_leak(5);
 }
 
 #[cfg(feature = "rocm")]
 #[test]
+#[serial]
 fn test_attention_device_tensor_with_mask() {
     let dim = 2;
     let batch_size = 1;
@@ -149,16 +158,18 @@ fn test_attention_device_tensor_with_mask() {
     let mask_data: Vec<f32> = vec![0.0, f32::NEG_INFINITY]; // Allow first, mask second
 
     // Create DeviceTensors
-    let backend = HipBackend::new().unwrap();
+    let fixture = rocmforge::GPU_FIXTURE.as_ref()
+        .expect("GPU not available - test skipped");
+    let backend = fixture.backend();
     let q_shape = TensorShape::from_dims(&[batch_size, seq_len, dim]);
     let k_shape = TensorShape::from_dims(&[batch_size, dim, seq_len]);
     let v_shape = TensorShape::from_dims(&[batch_size, seq_len, dim]);
     let mask_shape = TensorShape::from_dims(&[batch_size, seq_len, seq_len]);
 
-    let q_device = DeviceTensor::from_host_vec(&backend, q_data.clone(), q_shape).unwrap();
-    let k_device = DeviceTensor::from_host_vec(&backend, k_data.clone(), k_shape).unwrap();
-    let v_device = DeviceTensor::from_host_vec(&backend, v_data.clone(), v_shape).unwrap();
-    let mask_device = DeviceTensor::from_host_vec(&backend, mask_data.clone(), mask_shape).unwrap();
+    let q_device = DeviceTensor::from_host_vec(backend, q_data.clone(), q_shape).unwrap();
+    let k_device = DeviceTensor::from_host_vec(backend, k_data.clone(), k_shape).unwrap();
+    let v_device = DeviceTensor::from_host_vec(backend, v_data.clone(), v_shape).unwrap();
+    let mask_device = DeviceTensor::from_host_vec(backend, mask_data.clone(), mask_shape).unwrap();
 
     // Create attention with GPU backend
     let attention = Attention::with_backend(dim, AttentionBackend::Gpu);
@@ -176,10 +187,14 @@ fn test_attention_device_tensor_with_mask() {
     for &val in &output_host {
         assert!(val.is_finite());
     }
+
+    // Check for memory leaks
+    fixture.assert_no_leak(5);
 }
 
 #[cfg(feature = "rocm")]
 #[test]
+#[serial]
 fn test_attention_device_tensor_from_mmap() {
     let dim = 2;
     let batch_size = 1;
@@ -208,21 +223,23 @@ fn test_attention_device_tensor_from_mmap() {
     let mmap_weights = open_mmap_weights(temp_file.path()).unwrap();
 
     // Create DeviceTensors from mmap
-    let backend = HipBackend::new().unwrap();
+    let fixture = rocmforge::GPU_FIXTURE.as_ref()
+        .expect("GPU not available - test skipped");
+    let backend = fixture.backend();
     let q_shape = TensorShape::from_dims(&[batch_size, seq_len, dim]);
     let k_shape = TensorShape::from_dims(&[batch_size, dim, seq_len]);
     let v_shape = TensorShape::from_dims(&[batch_size, seq_len, dim]);
 
     // Q from mmap (offset 0, length 4)
-    let q_device = DeviceTensor::from_mmap(&backend, &mmap_weights, q_shape.clone(), 0).unwrap();
+    let q_device = DeviceTensor::from_mmap(backend, &mmap_weights, q_shape.clone(), 0).unwrap();
 
     // K from mmap (offset 4, length 4)
     let k_device =
-        DeviceTensor::from_mmap(&backend, &mmap_weights, k_shape.clone(), 4 * 4).unwrap();
+        DeviceTensor::from_mmap(backend, &mmap_weights, k_shape.clone(), 4 * 4).unwrap();
 
     // V from mmap (offset 8, length 4)
     let v_device =
-        DeviceTensor::from_mmap(&backend, &mmap_weights, v_shape.clone(), 8 * 4).unwrap();
+        DeviceTensor::from_mmap(backend, &mmap_weights, v_shape.clone(), 8 * 4).unwrap();
 
     // Create attention with GPU backend
     let attention = Attention::with_backend(dim, AttentionBackend::Gpu);
@@ -244,14 +261,20 @@ fn test_attention_device_tensor_from_mmap() {
     // Verify output is different from input V (attention should transform it)
     let v_host = v_device.to_host_vec().unwrap();
     assert_ne!(output_host, v_host);
+
+    // Check for memory leaks
+    fixture.assert_no_leak(5);
 }
 
 #[cfg(feature = "rocm")]
 #[test]
+#[serial]
 fn test_debug_device_tensor_sizes() {
     use rocmforge::backend::{DeviceTensor, HipBackend};
 
-    let backend = HipBackend::new().unwrap();
+    let fixture = rocmforge::GPU_FIXTURE.as_ref()
+        .expect("GPU not available - test skipped");
+    let backend = fixture.backend();
 
     // Test data
     let data = vec![1.0, 2.0, 3.0, 4.0]; // 4 elements
@@ -262,7 +285,7 @@ fn test_debug_device_tensor_sizes() {
     println!("Data bytes: {}", data.len() * 4);
     println!("Shape bytes: {}", shape.total_elements() * 4);
 
-    let device_tensor = DeviceTensor::from_host_vec(&backend, data.clone(), shape).unwrap();
+    let device_tensor = DeviceTensor::from_host_vec(backend, data.clone(), shape).unwrap();
 
     println!("Device tensor len(): {} elements", device_tensor.len());
     println!("Device tensor size(): {} bytes", device_tensor.size());
@@ -284,8 +307,7 @@ fn test_debug_device_tensor_sizes() {
     );
 
     // Test DeviceTensor creation with this shape
-    let backend = HipBackend::new().unwrap();
-    let test_tensor = DeviceTensor::from_host_vec(&backend, output_data.clone(), shape_from_len);
+    let test_tensor = DeviceTensor::from_host_vec(backend, output_data.clone(), shape_from_len);
     match test_tensor {
         Ok(tensor) => {
             println!(
@@ -301,4 +323,7 @@ fn test_debug_device_tensor_sizes() {
         }
         Err(e) => println!("Failed to create tensor: {:?}", e),
     }
+
+    // Check for memory leaks
+    fixture.assert_no_leak(5);
 }

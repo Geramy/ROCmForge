@@ -1,20 +1,27 @@
 use rocmforge::backend::hip_backend::{DeviceTensor, HipBackend};
+use serial_test::serial;
 use rocmforge::loader::gguf::GgufLoader;
+use rocmforge::loader::lazy_tensor::LazyTensor;
 use rocmforge::model::execution_plan::ExecutionPlan;
 use std::path::Path;
 use std::sync::Arc;
 
 /// Helper function to create a test backend
 fn create_test_backend() -> Arc<HipBackend> {
-    HipBackend::new().expect("Failed to create HIP backend")
+    let fixture = rocmforge::GPU_FIXTURE.as_ref()
+        .expect("GPU not available - test skipped");
+    let backend = fixture.backend();
 }
 
-/// Helper function to get tensor shape from DeviceTensor
-fn get_tensor_shape(tensor: &DeviceTensor) -> Vec<usize> {
-    tensor.shape().dims().to_vec()
+/// Helper function to get tensor shape from LazyTensor (Phase 2: handles unloaded tensors)
+fn get_lazy_tensor_shape(lazy: &LazyTensor) -> Vec<usize> {
+    lazy.shape()
+        .expect("LazyTensor should have shape metadata")
+        .to_vec()
 }
 
 #[test]
+#[serial]
 fn test_map_core_projections() {
     let gguf_path = "tests/data/tiny_model.gguf";
 
@@ -41,7 +48,7 @@ fn test_map_core_projections() {
     let first_layer = &execution_plan.layers()[0];
 
     // Validate QKV projection weight shape: [3 * hidden_size, hidden_size]
-    let qkv_shape = get_tensor_shape(first_layer.qkv_weight());
+    let qkv_shape = get_lazy_tensor_shape(&first_layer.qkv_weight);
     assert_eq!(qkv_shape.len(), 2, "QKV weight should be 2D");
     assert_eq!(
         qkv_shape[0],
@@ -55,7 +62,7 @@ fn test_map_core_projections() {
     );
 
     // Validate output projection weight shape: [hidden_size, hidden_size]
-    let o_proj_shape = get_tensor_shape(first_layer.o_proj());
+    let o_proj_shape = get_lazy_tensor_shape(&first_layer.o_proj);
     assert_eq!(o_proj_shape.len(), 2, "Output projection should be 2D");
     assert_eq!(
         o_proj_shape[0],
@@ -69,8 +76,8 @@ fn test_map_core_projections() {
     );
 
     // Validate QKV bias if present
-    if let Some(qkv_bias) = first_layer.qkv_bias() {
-        let qkv_bias_shape = get_tensor_shape(qkv_bias);
+    if let Some(qkv_bias) = &first_layer.qkv_bias {
+        let qkv_bias_shape = get_lazy_tensor_shape(qkv_bias);
         assert_eq!(qkv_bias_shape.len(), 1, "QKV bias should be 1D");
         assert_eq!(
             qkv_bias_shape[0],
@@ -80,8 +87,8 @@ fn test_map_core_projections() {
     }
 
     // Validate output projection bias if present
-    if let Some(o_proj_bias) = first_layer.o_proj_bias() {
-        let o_proj_bias_shape = get_tensor_shape(o_proj_bias);
+    if let Some(o_proj_bias) = &first_layer.o_proj_bias {
+        let o_proj_bias_shape = get_lazy_tensor_shape(o_proj_bias);
         assert_eq!(
             o_proj_bias_shape.len(),
             1,
@@ -101,6 +108,7 @@ fn test_map_core_projections() {
 }
 
 #[test]
+#[serial]
 fn test_map_mlp_weights() {
     let gguf_path = "tests/data/tiny_model.gguf";
 
@@ -158,7 +166,7 @@ fn test_map_mlp_weights() {
     );
 
     // Validate legacy MLP FC1 weight shape: [intermediate_size, hidden_size]
-    let fc1_shape = get_tensor_shape(first_layer.mlp_fc1());
+    let fc1_shape = get_lazy_tensor_shape(&first_layer.mlp_fc1);
     assert_eq!(fc1_shape.len(), 2, "MLP FC1 should be 2D");
     assert_eq!(
         fc1_shape[0], config.intermediate_size,
@@ -170,7 +178,7 @@ fn test_map_mlp_weights() {
     );
 
     // Validate legacy MLP FC2 weight shape: [hidden_size, intermediate_size]
-    let fc2_shape = get_tensor_shape(first_layer.mlp_fc2());
+    let fc2_shape = get_lazy_tensor_shape(&first_layer.mlp_fc2);
     assert_eq!(fc2_shape.len(), 2, "MLP FC2 should be 2D");
     assert_eq!(
         fc2_shape[0], config.hidden_size,
@@ -182,8 +190,8 @@ fn test_map_mlp_weights() {
     );
 
     // Validate MLP FC1 bias if present
-    if let Some(fc1_bias) = first_layer.mlp_fc1_bias() {
-        let fc1_bias_shape = get_tensor_shape(fc1_bias);
+    if let Some(fc1_bias) = &first_layer.mlp_fc1_bias {
+        let fc1_bias_shape = get_lazy_tensor_shape(fc1_bias);
         assert_eq!(fc1_bias_shape.len(), 1, "MLP FC1 bias should be 1D");
         assert_eq!(
             fc1_bias_shape[0], config.intermediate_size,
@@ -192,8 +200,8 @@ fn test_map_mlp_weights() {
     }
 
     // Validate MLP FC2 bias if present
-    if let Some(fc2_bias) = first_layer.mlp_fc2_bias() {
-        let fc2_bias_shape = get_tensor_shape(fc2_bias);
+    if let Some(fc2_bias) = &first_layer.mlp_fc2_bias {
+        let fc2_bias_shape = get_lazy_tensor_shape(fc2_bias);
         assert_eq!(fc2_bias_shape.len(), 1, "MLP FC2 bias should be 1D");
         assert_eq!(
             fc2_bias_shape[0], config.hidden_size,
@@ -208,6 +216,7 @@ fn test_map_mlp_weights() {
 }
 
 #[test]
+#[serial]
 fn test_layernorm_mappings() {
     let gguf_path = "tests/data/tiny_model.gguf";
 
@@ -229,7 +238,7 @@ fn test_layernorm_mappings() {
     let config = execution_plan.config();
 
     // Validate first layer norm weight shape: [hidden_size]
-    let norm1_shape = get_tensor_shape(first_layer.norm1_weight());
+    let norm1_shape = get_lazy_tensor_shape(&first_layer.norm1_weight);
     assert_eq!(norm1_shape.len(), 1, "First layer norm should be 1D");
     assert_eq!(
         norm1_shape[0], config.hidden_size,
@@ -237,7 +246,7 @@ fn test_layernorm_mappings() {
     );
 
     // Validate second layer norm weight shape: [hidden_size]
-    let norm2_shape = get_tensor_shape(first_layer.norm2_weight());
+    let norm2_shape = get_lazy_tensor_shape(&first_layer.norm2_weight);
     assert_eq!(norm2_shape.len(), 1, "Second layer norm should be 1D");
     assert_eq!(
         norm2_shape[0], config.hidden_size,
@@ -245,8 +254,8 @@ fn test_layernorm_mappings() {
     );
 
     // Validate first layer norm bias if present
-    if let Some(norm1_bias) = first_layer.norm1_bias() {
-        let norm1_bias_shape = get_tensor_shape(norm1_bias);
+    if let Some(norm1_bias) = &first_layer.norm1_bias {
+        let norm1_bias_shape = get_lazy_tensor_shape(norm1_bias);
         assert_eq!(
             norm1_bias_shape.len(),
             1,
@@ -259,8 +268,8 @@ fn test_layernorm_mappings() {
     }
 
     // Validate second layer norm bias if present
-    if let Some(norm2_bias) = first_layer.norm2_bias() {
-        let norm2_bias_shape = get_tensor_shape(norm2_bias);
+    if let Some(norm2_bias) = &first_layer.norm2_bias {
+        let norm2_bias_shape = get_lazy_tensor_shape(norm2_bias);
         assert_eq!(
             norm2_bias_shape.len(),
             1,
@@ -274,8 +283,8 @@ fn test_layernorm_mappings() {
 
     // Test that all layers have consistent LayerNorm shapes
     for (i, layer) in execution_plan.layers().iter().enumerate() {
-        let norm1_shape = get_tensor_shape(layer.norm1_weight());
-        let norm2_shape = get_tensor_shape(layer.norm2_weight());
+        let norm1_shape = get_lazy_tensor_shape(&layer.norm1_weight);
+        let norm2_shape = get_lazy_tensor_shape(&layer.norm2_weight);
 
         assert_eq!(
             norm1_shape[0], config.hidden_size,
@@ -297,6 +306,7 @@ fn test_layernorm_mappings() {
 }
 
 #[test]
+#[serial]
 fn test_embedding_and_lm_head_mapping() {
     let gguf_path = "tests/data/tiny_model.gguf";
 
@@ -339,10 +349,10 @@ fn test_embedding_and_lm_head_mapping() {
     // Validate that all layers have the expected tensor types
     for (i, layer) in execution_plan.layers().iter().enumerate() {
         // Check that all required tensors are present
-        let qkv_shape = get_tensor_shape(layer.qkv_weight());
-        let o_proj_shape = get_tensor_shape(layer.o_proj());
-        let norm1_shape = get_tensor_shape(layer.norm1_weight());
-        let norm2_shape = get_tensor_shape(layer.norm2_weight());
+        let qkv_shape = get_lazy_tensor_shape(&layer.qkv_weight);
+        let o_proj_shape = get_lazy_tensor_shape(&layer.o_proj);
+        let norm1_shape = get_lazy_tensor_shape(&layer.norm1_weight);
+        let norm2_shape = get_lazy_tensor_shape(&layer.norm2_weight);
 
         assert_eq!(qkv_shape.len(), 2, "Layer {} QKV should be 2D", i);
         assert_eq!(o_proj_shape.len(), 2, "Layer {} O_proj should be 2D", i);

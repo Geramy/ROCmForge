@@ -1,15 +1,20 @@
 //! Tests for HipBuffer size invariants and CPU fallback path buffer corruption
 
 #[cfg(feature = "rocm")]
+use serial_test::serial;
+#[cfg(feature = "rocm")]
 use rocmforge::backend::{DeviceTensor, HipBackend};
 #[cfg(feature = "rocm")]
 use rocmforge::loader::mmap_loader::TensorShape;
 
 #[cfg(feature = "rocm")]
 #[test]
+#[serial]
 fn hip_buffer_alloc_size_invariant() {
     // Test that HipBuffer size remains constant after operations
-    let backend = HipBackend::new().expect("Failed to create HIP backend");
+    let fixture = rocmforge::GPU_FIXTURE.as_ref()
+        .expect("GPU not available - test skipped");
+    let backend = fixture.backend();
 
     // Allocate buffer for 16 bytes (4 f32 elements)
     let buffer = backend
@@ -43,18 +48,24 @@ fn hip_buffer_alloc_size_invariant() {
 
     // Verify data integrity
     assert_eq!(output_data, test_data, "Data should match after round-trip");
+
+    // Check for memory leaks
+    fixture.assert_no_leak(5);
 }
 
 #[cfg(feature = "rocm")]
 #[test]
+#[serial]
 fn test_attention_cpu_fallback_buffer_size_consistency() {
     // Test the exact sequence that causes the "Destination buffer too small: 16 > 4" error
-    let backend = HipBackend::new().expect("Failed to create HIP backend");
+    let fixture = rocmforge::GPU_FIXTURE.as_ref()
+        .expect("GPU not available - test skipped");
+    let backend = fixture.backend();
 
     // Create input tensor with 4 f32 elements (16 bytes)
     let input_data = vec![1.0f32, 2.0, 3.0, 4.0];
     let input_shape = TensorShape::from_dims(&[4]);
-    let input_tensor = DeviceTensor::from_host_vec(&backend, input_data.clone(), input_shape)
+    let input_tensor = DeviceTensor::from_host_vec(backend, input_data.clone(), input_shape)
         .expect("Failed to create input tensor");
 
     // Verify initial tensor state
@@ -75,7 +86,7 @@ fn test_attention_cpu_fallback_buffer_size_consistency() {
 
     // Create output tensor using same pattern as attention CPU fallback
     let output_shape = TensorShape::from_dims(&[4]);
-    let output_tensor = DeviceTensor::from_host_vec(&backend, output_data.clone(), output_shape)
+    let output_tensor = DeviceTensor::from_host_vec(backend, output_data.clone(), output_shape)
         .expect("Failed to create output tensor");
 
     // Verify output tensor state - this should NOT fail with "Destination buffer too small: 16 > 4"
@@ -100,13 +111,19 @@ fn test_attention_cpu_fallback_buffer_size_consistency() {
         4,
         "Final host data should have 4 elements"
     );
+
+    // Check for memory leaks
+    fixture.assert_no_leak(5);
 }
 
 #[cfg(feature = "rocm")]
 #[test]
+#[serial]
 fn device_tensor_size_bytes_consistency() {
     // Test that DeviceTensor size() always returns bytes and len() returns elements
-    let backend = HipBackend::new().expect("Failed to create HIP backend");
+    let fixture = rocmforge::GPU_FIXTURE.as_ref()
+        .expect("GPU not available - test skipped");
+    let backend = fixture.backend();
 
     // Test with different tensor sizes
     let test_cases = vec![
@@ -117,7 +134,7 @@ fn device_tensor_size_bytes_consistency() {
 
     for (data, expected_elements) in test_cases {
         let shape = TensorShape::from_dims(&[expected_elements]);
-        let tensor = DeviceTensor::from_host_vec(&backend, data.clone(), shape)
+        let tensor = DeviceTensor::from_host_vec(backend, data.clone(), shape)
             .expect("Failed to create tensor");
 
         let expected_bytes = expected_elements * std::mem::size_of::<f32>();
@@ -147,4 +164,7 @@ fn device_tensor_size_bytes_consistency() {
         let recovered = tensor.to_host_vec().expect("Failed to copy tensor to host");
         assert_eq!(recovered, data, "Round-trip data should match");
     }
+
+    // Check for memory leaks
+    fixture.assert_no_leak(5);
 }

@@ -7,11 +7,13 @@
 //! - Complete decode_step() integration
 
 use rocmforge::backend::{DeviceTensor, HipBackend, HipError};
+use serial_test::serial;
 use rocmforge::loader::TensorShape;
 use rocmforge::model::{config::ModelConfig, execution_plan::ExecutionPlan, kv_cache::KVCache};
 
 /// Test basic model configuration creation
 #[test]
+#[serial]
 fn test_model_config_creation() -> Result<(), HipError> {
     let config = ModelConfig::llama2_7b();
 
@@ -30,13 +32,16 @@ fn test_model_config_creation() -> Result<(), HipError> {
 
 /// Test basic backend creation
 #[test]
+#[serial]
 fn test_backend_creation() -> Result<(), HipError> {
-    let backend = HipBackend::new()?;
+    let fixture = rocmforge::GPU_FIXTURE.as_ref()
+        .expect("GPU not available - test skipped");
+    let backend = fixture.backend();
 
     // Test basic tensor creation
     let test_data = vec![1.0f32; 100];
     let tensor =
-        DeviceTensor::from_host_vec(&backend, test_data, TensorShape::from_dims(&[10, 10]))?;
+        DeviceTensor::from_host_vec(backend, test_data, TensorShape::from_dims(&[10, 10]))?;
 
     // Verify tensor shape
     assert_eq!(tensor.shape().dims(), &[10, 10]);
@@ -46,12 +51,14 @@ fn test_backend_creation() -> Result<(), HipError> {
 
 /// Test KV cache creation
 #[test]
+#[serial]
 fn test_kv_cache_creation() -> Result<(), HipError> {
-    let backend = HipBackend::new()?;
+    let fixture = rocmforge::GPU_FIXTURE.as_ref()
+        .expect("GPU not available - test skipped");
+    let backend = fixture.backend();
     let config = ModelConfig::llama2_7b();
 
-    let kv_cache = KVCache::new(
-        &backend,
+    let kv_cache = KVCache::new(backend,
         config.num_attention_heads,
         config.hidden_size / config.num_attention_heads,
         config.num_hidden_layers,
@@ -66,8 +73,11 @@ fn test_kv_cache_creation() -> Result<(), HipError> {
 
 /// Test execution plan creation
 #[test]
+#[serial]
 fn test_execution_plan_creation() -> Result<(), HipError> {
-    let backend = HipBackend::new()?;
+    let fixture = rocmforge::GPU_FIXTURE.as_ref()
+        .expect("GPU not available - test skipped");
+    let backend = fixture.backend();
     let config = ModelConfig::llama2_7b();
 
     let execution_plan = ExecutionPlan::new(&backend, &config)?;
@@ -84,8 +94,11 @@ fn test_execution_plan_creation() -> Result<(), HipError> {
 
 /// Test scratch buffer creation
 #[test]
+#[serial]
 fn test_scratch_buffer_creation() -> Result<(), HipError> {
-    let backend = HipBackend::new()?;
+    let fixture = rocmforge::GPU_FIXTURE.as_ref()
+        .expect("GPU not available - test skipped");
+    let backend = fixture.backend();
     let config = ModelConfig::llama2_7b();
 
     let scratch_buffers = backend.create_scratch_buffers(&config)?;
@@ -98,18 +111,21 @@ fn test_scratch_buffer_creation() -> Result<(), HipError> {
 
 /// Test tensor operations
 #[test]
+#[serial]
 fn test_tensor_operations() -> Result<(), HipError> {
-    let backend = HipBackend::new()?;
+    let fixture = rocmforge::GPU_FIXTURE.as_ref()
+        .expect("GPU not available - test skipped");
+    let backend = fixture.backend();
 
     // Create test tensors
     let data_a = vec![1.0f32; 100];
     let data_b = vec![2.0f32; 100];
 
     let tensor_a =
-        DeviceTensor::from_host_vec(&backend, data_a, TensorShape::from_dims(&[10, 10]))?;
+        DeviceTensor::from_host_vec(backend, data_a, TensorShape::from_dims(&[10, 10]))?;
 
     let tensor_b =
-        DeviceTensor::from_host_vec(&backend, data_b, TensorShape::from_dims(&[10, 10]))?;
+        DeviceTensor::from_host_vec(backend, data_b, TensorShape::from_dims(&[10, 10]))?;
 
     // Verify tensor shapes
     assert_eq!(tensor_a.shape().dims(), &[10, 10]);
@@ -133,14 +149,16 @@ fn test_tensor_operations() -> Result<(), HipError> {
 
 /// Test multi-layer pipeline structure
 #[test]
+#[serial]
 fn test_multilayer_pipeline_structure() -> Result<(), HipError> {
-    let backend = HipBackend::new()?;
+    let fixture = rocmforge::GPU_FIXTURE.as_ref()
+        .expect("GPU not available - test skipped");
+    let backend = fixture.backend();
     let config = ModelConfig::llama2_7b();
 
     // Create components
     let execution_plan = ExecutionPlan::new(&backend, &config)?;
-    let kv_cache = KVCache::new(
-        &backend,
+    let kv_cache = KVCache::new(backend,
         config.num_attention_heads,
         config.hidden_size / config.num_attention_heads,
         config.num_hidden_layers,
@@ -161,6 +179,7 @@ fn test_multilayer_pipeline_structure() -> Result<(), HipError> {
 
 /// Test configuration validation
 #[test]
+#[serial]
 fn test_configuration_validation() {
     // Test valid configuration
     let valid_config = ModelConfig::llama2_7b();
@@ -197,6 +216,7 @@ fn test_configuration_validation() {
 
 /// Test different model types
 #[test]
+#[serial]
 fn test_different_model_types() {
     // Test LLaMA configuration
     let llama_config = ModelConfig::llama2_7b();
@@ -213,6 +233,7 @@ fn test_different_model_types() {
 
 /// Test tensor shape operations
 #[test]
+#[serial]
 fn test_tensor_shape_operations() {
     // Test creating shapes
     let shape1 = TensorShape::from_dims(&[2, 3, 4]);

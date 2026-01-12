@@ -1,5 +1,6 @@
 //! HIP smoke tests for real GPU execution validation
 
+use serial_test::serial;
 use std::ffi::CString;
 use std::path::Path;
 use std::ptr;
@@ -11,9 +12,12 @@ mod tests {
     use super::*;
 
     #[test]
+    #[serial]
     fn test_load_smoke_kernel() -> HipResult<()> {
         // Test that HIP kernel compiles and loads successfully
-        let backend = HipBackend::new()?;
+        let fixture = rocmforge::GPU_FIXTURE.as_ref()
+            .expect("GPU not available - test skipped");
+        let backend = fixture.backend();
 
         // This should load the compiled smoke_test.hsaco
         let module_path = Path::new("src/backend/hip_kernels/smoke_test.hsaco");
@@ -34,9 +38,12 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_execute_smoke_kernel() -> HipResult<()> {
         // Test kernel execution with real GPU memory operations
-        let backend = HipBackend::new()?;
+        let fixture = rocmforge::GPU_FIXTURE.as_ref()
+            .expect("GPU not available - test skipped");
+        let backend = fixture.backend();
 
         // Allocate GPU buffer of 16 floats initialized to 0.0
         let data_size = 16;
@@ -63,13 +70,19 @@ mod tests {
             assert_eq!(value, 1.0, "Element {} should be 1.0, got {}", i, value);
         }
 
+        // Check for memory leaks
+        fixture.assert_no_leak(5);
+
         Ok(())
     }
 
     #[test]
+    #[serial]
     fn test_gpu_memory_roundtrip() -> HipResult<()> {
         // Test GPU memory allocation and data roundtrip
-        let backend = HipBackend::new()?;
+        let fixture = rocmforge::GPU_FIXTURE.as_ref()
+            .expect("GPU not available - test skipped");
+        let backend = fixture.backend();
 
         // Test data with specific pattern
         let test_data: Vec<f32> = vec![
@@ -99,13 +112,19 @@ mod tests {
             );
         }
 
+        // Check for memory leaks
+        fixture.assert_no_leak(5);
+
         Ok(())
     }
 
     #[test]
+    #[serial]
     fn test_hip_error_handling() -> HipResult<()> {
         // Test error handling for invalid operations
-        let backend = HipBackend::new()?;
+        let fixture = rocmforge::GPU_FIXTURE.as_ref()
+            .expect("GPU not available - test skipped");
+        let backend = fixture.backend();
 
         // Test invalid module path
         let invalid_path = "/nonexistent/path/kernel.hsaco";
@@ -120,13 +139,19 @@ mod tests {
             assert!(result.is_err(), "Should fail to find nonexistent kernel");
         }
 
+        // Check for memory leaks
+        fixture.assert_no_leak(5);
+
         Ok(())
     }
 
     #[test]
+    #[serial]
     fn test_gpu_buffer_allocation() -> HipResult<()> {
         // Test various GPU buffer sizes
-        let backend = HipBackend::new()?;
+        let fixture = rocmforge::GPU_FIXTURE.as_ref()
+            .expect("GPU not available - test skipped");
+        let backend = fixture.backend();
 
         // Test small buffer
         let small_buffer = backend.alloc_gpu_buffer::<f32>(1)?;
@@ -140,13 +165,19 @@ mod tests {
         let large_buffer = backend.alloc_gpu_buffer::<f32>(65536)?;
         assert_eq!(large_buffer.size(), 65536 * std::mem::size_of::<f32>());
 
+        // Check for memory leaks
+        fixture.assert_no_leak(5);
+
         Ok(())
     }
 
     #[test]
+    #[serial]
     fn test_kernel_symbol_resolution() -> HipResult<()> {
         // Test that kernel symbols can be resolved correctly
-        let backend = HipBackend::new()?;
+        let fixture = rocmforge::GPU_FIXTURE.as_ref()
+            .expect("GPU not available - test skipped");
+        let backend = fixture.backend();
 
         // This test will be fully implemented when we have actual HIP module loading
         // For now, test the symbol resolution infrastructure
@@ -164,6 +195,9 @@ mod tests {
                 backend.get_kernel(&module_path.to_string_lossy(), "invalid_kernel");
             assert!(invalid_result.is_err(), "Should not find 'invalid_kernel'");
         }
+
+        // Check for memory leaks
+        fixture.assert_no_leak(5);
 
         Ok(())
     }

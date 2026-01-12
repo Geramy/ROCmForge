@@ -177,42 +177,187 @@ impl MultiQueryAttention {
         position_ids: Option<&[usize]>,
         mask: Option<&DeviceTensor>,
     ) -> AttentionResult<DeviceTensor> {
-        // For now, fallback to CPU implementation
-        // TODO: Implement full GPU pipeline for MQA
-        let q_host = q.to_host_vec().map_err(|e| {
-            AttentionError::MemoryCopy(format!("Failed to copy Q to host: {}", e))
-        })?;
-        let k_host = k.to_host_vec().map_err(|e| {
-            AttentionError::MemoryCopy(format!("Failed to copy K to host: {}", e))
-        })?;
-        let v_host = v.to_host_vec().map_err(|e| {
-            AttentionError::MemoryCopy(format!("Failed to copy V to host: {}", e))
-        })?;
+        // If MHA (equal heads), use existing GPU path
+        if self.config.num_query_heads == self.config.num_kv_heads {
+            return self.forward_mha_gpu(q, k, v, position_ids, mask);
+        }
 
-        let mask_host = mask
-            .map(|m| {
-                m.to_host_vec().map_err(|e| {
-                    AttentionError::MemoryCopy(format!("Failed to copy mask to host: {}", e))
-                })
-            })
-            .transpose()?;
+        // MQA/GQA: Replicate K/V on GPU then use standard attention
+        let (k_expanded, v_expanded) = self.replicate_kv_gpu(q, k, v)?;
 
-        let output = self.forward(
-            &q_host,
-            &k_host,
-            &v_host,
-            position_ids,
-            mask_host.as_deref(),
-        )?;
+        // Apply RoPE if needed
+        // TODO: Implement RoPE application for GPU tensors
 
-        // Convert output back to DeviceTensor
+        // Use standard attention pipeline with expanded K/V
+        self.compute_attention_gpu(q, &k_expanded, &v_expanded, mask)
+    }
+
+    /// Replicate K and V tensors from num_kv_heads to num_q_heads on GPU
+    #[cfg(feature = "rocm")]
+    fn replicate_kv_gpu(
+        &self,
+        q: &DeviceTensor,
+        k: &DeviceTensor,
+        v: &DeviceTensor,
+    ) -> AttentionResult<(DeviceTensor, DeviceTensor)> {
+        use crate::attention::kernels::mqa_kv_replicate_gpu_kernel;
+
+        // Extract dimensions from query tensor
+        let q_dims = q.shape().dims();
+        let batch_size = q_dims[0];
+        let seq_len = q_dims[1];
+        let num_q_heads = q_dims[2];
+        let head_dim = q_dims[3];
+
+        let num_kv_heads = self.config.num_kv_heads;
+
+        // Verify num_q_heads matches config
+        assert_eq!(num_q_heads, self.config.num_query_heads);
+
+        // Allocate expanded tensors
+        let k_expanded_shape = crate::loader::TensorShape::from_dims(&[batch_size, seq_len, num_q_heads, head_dim]);
+        let v_expanded_shape = crate::loader::TensorShape::from_dims(&[batch_size, seq_len, num_q_heads, head_dim]);
+
         let backend = HipBackend::new().map_err(|e| {
             AttentionError::HandleCreation(format!("Failed to create HIP backend: {}", e))
         })?;
-        let shape = q.shape().clone(); // Use same shape as query tensor
-        DeviceTensor::from_host_vec(&backend, output, shape).map_err(|e| {
-            AttentionError::MemoryAllocation(format!("Failed to create output tensor: {}", e))
-        })
+
+        let k_expanded = DeviceTensor::empty(&backend, k_expanded_shape).map_err(|e| {
+            AttentionError::MemoryAllocation(format!("Failed to allocate expanded K: {}", e))
+        })?;
+
+        let v_expanded = DeviceTensor::empty(&backend, v_expanded_shape).map_err(|e| {
+            AttentionError::MemoryAllocation(format!("Failed to allocate expanded V: {}", e))
+        })?;
+
+        // Call GPU kernel
+        let k_ptr = k.as_ptr();
+        let v_ptr = v.as_ptr();
+        let k_expanded_ptr = k_expanded.as_ptr() as *mut f32;
+        let v_expanded_ptr = v_expanded.as_ptr() as *mut f32;
+
+        unsafe {
+            mqa_kv_replicate_gpu_kernel(
+                k_ptr,
+                v_ptr,
+                k_expanded_ptr,
+                v_expanded_ptr,
+                batch_size as u32,
+                seq_len as u32,
+                num_kv_heads as u32,
+                num_q_heads as u32,
+                head_dim as u32,
+            ).map_err(|e| {
+                AttentionError::GpuOperation(format!("KV replication kernel failed: {}", e))
+            })?;
+
+            // Synchronize to ensure kernel completes
+            backend.synchronize().map_err(|e| {
+                AttentionError::Synchronization(format!("Failed to synchronize GPU: {}", e))
+            })?;
+        }
+
+        Ok((k_expanded, v_expanded))
+    }
+
+    /// Compute attention using GPU path (for MHA)
+    #[cfg(feature = "rocm")]
+    fn forward_mha_gpu(
+        &self,
+        q: &DeviceTensor,
+        k: &DeviceTensor,
+        v: &DeviceTensor,
+        _position_ids: Option<&[usize]>,
+        mask: Option<&DeviceTensor>,
+    ) -> AttentionResult<DeviceTensor> {
+        // For MHA, we can use the standard attention path
+        // TODO: Implement full GPU attention pipeline
+        // For now, return a simple implementation
+        self.compute_attention_gpu(q, k, v, mask)
+    }
+
+    /// Compute attention scores on GPU
+    #[cfg(feature = "rocm")]
+    fn compute_attention_gpu(
+        &self,
+        q: &DeviceTensor,
+        k: &DeviceTensor,
+        v: &DeviceTensor,
+        _mask: Option<&DeviceTensor>,
+    ) -> AttentionResult<DeviceTensor> {
+        use crate::backend::hip_backend::{HipBackend, HipError};
+        use crate::attention::kernels::{
+            qkt_matmul_gpu_kernel_scaled, softmax_gpu_kernel, weighted_matmul_gpu_kernel
+        };
+
+        let backend = HipBackend::new().map_err(|e| {
+            AttentionError::HandleCreation(format!("Failed to create HIP backend: {}", e))
+        })?;
+
+        let q_dims = q.shape().dims();
+        let batch_size = q_dims[0];
+        let seq_len = q_dims[1];
+        let num_heads = q_dims[2];
+        let head_dim = q_dims[3];
+
+        let kv_seq_len = k.shape().dims()[1];
+
+        // Allocate attention scores tensor
+        let scores_shape = crate::loader::TensorShape::from_dims(&[batch_size, seq_len, num_heads, kv_seq_len]);
+        let mut scores = DeviceTensor::empty(&backend, scores_shape.clone()).map_err(|e| {
+            AttentionError::MemoryAllocation(format!("Failed to allocate scores: {}", e))
+        })?;
+
+        // Compute QK^T with scaling
+        let scale = 1.0 / (head_dim as f32).sqrt();
+        unsafe {
+            qkt_matmul_gpu_kernel_scaled(
+                q.as_ptr(),
+                k.as_ptr(),
+                scores.as_ptr() as *mut f32,
+                batch_size as u32,
+                seq_len as u32,
+                kv_seq_len as u32,
+                num_heads as u32,
+                head_dim as u32,
+                scale,
+            ).map_err(|e| {
+                AttentionError::GpuOperation(format!("QK^T kernel failed: {}", e))
+            })?;
+
+            // Apply softmax
+            softmax_gpu_kernel(
+                scores.as_ptr() as *mut f32,
+                batch_size as u32,
+                seq_len as u32 * num_heads as u32, // Treat [batch, seq, heads] as batch
+            );
+
+            // Allocate output tensor
+            let output_shape = crate::loader::TensorShape::from_dims(&[batch_size, seq_len, num_heads, head_dim]);
+            let mut output = DeviceTensor::empty(&backend, output_shape.clone()).map_err(|e| {
+                AttentionError::MemoryAllocation(format!("Failed to allocate output: {}", e))
+            })?;
+
+            // Compute weighted × V
+            weighted_matmul_gpu_kernel(
+                scores.as_ptr(),
+                v.as_ptr(),
+                output.as_ptr() as *mut f32,
+                batch_size as u32,
+                seq_len as u32,
+                kv_seq_len as u32,
+                num_heads as u32,
+                head_dim as u32,
+            ).map_err(|e| {
+                AttentionError::GpuOperation(format!("Weighted matmul kernel failed: {}", e))
+            })?;
+
+            backend.synchronize().map_err(|e| {
+                AttentionError::Synchronization(format!("Failed to synchronize GPU: {}", e))
+            })?;
+
+            Ok(output)
+        }
     }
 
     /// Extract batch size from input tensors

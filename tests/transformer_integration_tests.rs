@@ -2,6 +2,7 @@
 //! Tests the complete transformer pipeline including LayerNorm, attention, and MLP
 
 use rocmforge::backend::hip_backend::{DeviceTensor, HipBackend};
+use serial_test::serial;
 use rocmforge::backend::scratch::ScratchBufferManager;
 use rocmforge::loader::mmap_loader::TensorShape;
 use rocmforge::model::config::{ModelConfig, ModelType};
@@ -15,9 +16,11 @@ mod tests {
     #[test]
     fn test_layer_norm_integration() {
         // Initialize HIP backend
-        let backend_result = HipBackend::new();
-        assert!(backend_result.is_ok(), "Failed to initialize HIP backend");
-        let backend = backend_result.unwrap();
+        let fixture = rocmforge::GPU_FIXTURE.as_ref()
+        .expect("GPU not available - test skipped");
+    let backend = fixture.backend();
+        assert!(backend.is_ok(), "Failed to initialize HIP backend");
+        let backend = backend.unwrap();
 
         // Create input tensor [batch=2, seq_len=3, hidden_size=128]
         let batch_size = 2;
@@ -106,9 +109,11 @@ mod tests {
     #[test]
     fn test_mlp_swiglu_integration() {
         // Initialize HIP backend
-        let backend_result = HipBackend::new();
-        assert!(backend_result.is_ok(), "Failed to initialize HIP backend");
-        let backend = backend_result.unwrap();
+        let fixture = rocmforge::GPU_FIXTURE.as_ref()
+        .expect("GPU not available - test skipped");
+    let backend = fixture.backend();
+        assert!(backend.is_ok(), "Failed to initialize HIP backend");
+        let backend = backend.unwrap();
 
         // Test dimensions
         let seq_len = 2;
@@ -197,9 +202,11 @@ mod tests {
     #[test]
     fn test_transformer_component_shapes() {
         // Initialize HIP backend
-        let backend_result = HipBackend::new();
-        assert!(backend_result.is_ok(), "Failed to initialize HIP backend");
-        let backend = backend_result.unwrap();
+        let fixture = rocmforge::GPU_FIXTURE.as_ref()
+        .expect("GPU not available - test skipped");
+    let backend = fixture.backend();
+        assert!(backend.is_ok(), "Failed to initialize HIP backend");
+        let backend = backend.unwrap();
 
         // Create model configuration
         let config = ModelConfig {
@@ -245,8 +252,7 @@ mod tests {
         let mut mlp_output = DeviceTensor::empty(&backend, output_shape.clone()).unwrap();
 
         // Create scratch buffer manager
-        let scratch = ScratchBufferManager::new(
-            &backend,
+        let scratch = ScratchBufferManager::new(backend,
             config.num_attention_heads,
             hidden_size,
             config.head_dim,
@@ -254,8 +260,7 @@ mod tests {
         );
 
         // Create KV cache
-        let mut kv_cache = KVCache::new(
-            &backend,
+        let mut kv_cache = KVCache::new(backend,
             config.num_hidden_layers,
             config.num_attention_heads,
             config.head_dim,

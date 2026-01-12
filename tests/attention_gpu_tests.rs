@@ -5,6 +5,7 @@
 
 #[cfg(test)]
 mod tests {
+    use serial_test::serial;
     use rocmforge::backend::{DeviceTensor, HipBackend};
     use rocmforge::loader::TensorShape;
     use rocmforge::model::config::ModelConfig;
@@ -14,9 +15,13 @@ mod tests {
     /// Test basic HIP backend creation for attention kernels
     #[test]
     #[cfg(feature = "rocm")]
+    #[serial]
     fn test_hip_backend_creation() {
-        let backend = HipBackend::new().expect("Failed to create HIP backend");
+        let fixture = rocmforge::GPU_FIXTURE.as_ref()
+            .expect("GPU not available - test skipped");
+        let _backend = fixture.backend();
         assert!(true, "HIP backend created successfully");
+        fixture.assert_no_leak(5);
     }
 
     /// Test that we can create model configuration
@@ -31,11 +36,15 @@ mod tests {
     /// Test HipAttentionKernels struct creation - this should fail initially
     #[test]
     #[cfg(feature = "rocm")]
+    #[serial]
     fn test_hip_attention_kernels_creation() {
-        let backend = HipBackend::new().expect("Failed to create HIP backend");
+        let fixture = rocmforge::GPU_FIXTURE.as_ref()
+            .expect("GPU not available - test skipped");
+        let backend = fixture.backend();
         // This should fail until we implement HipAttentionKernels
-        let _kernels = rocmforge::ops::attention_gpu::HipAttentionKernels::new(&backend)
+        let _kernels = rocmforge::ops::attention_gpu::HipAttentionKernels::new(backend)
             .expect("Failed to create HIP attention kernels");
+        fixture.assert_no_leak(5);
     }
 
     /// Helper function to create random test data
@@ -57,9 +66,11 @@ mod tests {
     /// Test GPU QK^T kernel computation
     #[test]
     #[cfg(feature = "rocm")]
+    #[serial]
     fn test_gpu_qk_kernel() {
-        // Initialize backend with ROCm
-        let backend = HipBackend::new().expect("Failed to create HIP backend");
+        let fixture = rocmforge::GPU_FIXTURE.as_ref()
+            .expect("GPU not available - test skipped");
+        let backend = fixture.backend();
 
         // Test configuration
         let seq_len = 4;
@@ -75,16 +86,16 @@ mod tests {
         let q_data = create_random_data(seq_len * num_heads * head_dim, 0.0, 1.0);
         let k_data = create_random_data(cache_len * num_heads * head_dim, 0.0, 1.0);
 
-        let q = DeviceTensor::from_host_vec(&backend, q_data, q_shape)
+        let q = DeviceTensor::from_host_vec(backend, q_data, q_shape)
             .expect("Failed to create Q tensor");
-        let k = DeviceTensor::from_host_vec(&backend, k_data, k_shape)
+        let k = DeviceTensor::from_host_vec(backend, k_data, k_shape)
             .expect("Failed to create K tensor");
         let mut output =
-            DeviceTensor::empty(&backend, output_shape).expect("Failed to create output tensor");
+            DeviceTensor::empty(backend, output_shape).expect("Failed to create output tensor");
 
         // Initialize attention kernels
         let kernels =
-            HipAttentionKernels::new(&backend).expect("Failed to initialize attention kernels");
+            HipAttentionKernels::new(backend).expect("Failed to initialize attention kernels");
 
         // Test QK^T computation
         kernels
@@ -121,13 +132,21 @@ mod tests {
                 );
             }
         }
+
+        drop(q);
+        drop(k);
+        drop(output);
+        fixture.assert_no_leak(5);
     }
 
     /// Test GPU softmax kernel with causal masking
     #[test]
     #[cfg(feature = "rocm")]
+    #[serial]
     fn test_gpu_softmax_kernel() {
-        let backend = HipBackend::new().expect("Failed to create HIP backend");
+        let fixture = rocmforge::GPU_FIXTURE.as_ref()
+            .expect("GPU not available - test skipped");
+        let backend = fixture.backend();
 
         let seq_len = 6;
         let cache_len = 8;
@@ -136,13 +155,13 @@ mod tests {
 
         // Create attention scores (before softmax)
         let attention_data = create_random_data(seq_len * cache_len, -2.0, 2.0);
-        let mut attention = DeviceTensor::from_host_vec(&backend, attention_data, attention_shape)
+        let mut attention = DeviceTensor::from_host_vec(backend, attention_data, attention_shape)
             .expect("Failed to create attention tensor");
         let temp_buffer =
-            DeviceTensor::empty(&backend, temp_shape).expect("Failed to create temp buffer");
+            DeviceTensor::empty(backend, temp_shape).expect("Failed to create temp buffer");
 
         let kernels =
-            HipAttentionKernels::new(&backend).expect("Failed to initialize attention kernels");
+            HipAttentionKernels::new(backend).expect("Failed to initialize attention kernels");
 
         // Apply causal mask and softmax
         kernels
@@ -189,13 +208,20 @@ mod tests {
                 );
             }
         }
+
+        drop(attention);
+        drop(temp_buffer);
+        fixture.assert_no_leak(5);
     }
 
     /// Test GPU attention-weighted V kernel
     #[test]
     #[cfg(feature = "rocm")]
+    #[serial]
     fn test_gpu_attention_v_kernel() {
-        let backend = HipBackend::new().expect("Failed to create HIP backend");
+        let fixture = rocmforge::GPU_FIXTURE.as_ref()
+            .expect("GPU not available - test skipped");
+        let backend = fixture.backend();
 
         let seq_len = 3;
         let cache_len = 5;
@@ -209,15 +235,15 @@ mod tests {
         let attention_data = create_random_data(seq_len * cache_len, 0.0, 1.0);
         let v_data = create_random_data(cache_len * num_heads * head_dim, 0.0, 1.0);
 
-        let attention = DeviceTensor::from_host_vec(&backend, attention_data, attention_shape)
+        let attention = DeviceTensor::from_host_vec(backend, attention_data, attention_shape)
             .expect("Failed to create attention tensor");
-        let v = DeviceTensor::from_host_vec(&backend, v_data, v_shape)
+        let v = DeviceTensor::from_host_vec(backend, v_data, v_shape)
             .expect("Failed to create V tensor");
         let mut output =
-            DeviceTensor::empty(&backend, output_shape).expect("Failed to create output tensor");
+            DeviceTensor::empty(backend, output_shape).expect("Failed to create output tensor");
 
         let kernels =
-            HipAttentionKernels::new(&backend).expect("Failed to initialize attention kernels");
+            HipAttentionKernels::new(backend).expect("Failed to initialize attention kernels");
 
         // Compute attention-weighted V
         kernels
@@ -256,13 +282,21 @@ mod tests {
                 }
             }
         }
+
+        drop(attention);
+        drop(v);
+        drop(output);
+        fixture.assert_no_leak(5);
     }
 
     /// Test complete GPU attention pipeline with KV cache integration
     #[test]
     #[cfg(feature = "rocm")]
+    #[serial]
     fn test_gpu_attention_pipeline() {
-        let backend = HipBackend::new().expect("Failed to create HIP backend");
+        let fixture = rocmforge::GPU_FIXTURE.as_ref()
+            .expect("GPU not available - test skipped");
+        let backend = fixture.backend();
 
         // Model configuration
         let config = ModelConfig::llama2_7b();
@@ -273,7 +307,7 @@ mod tests {
 
         // Create KV cache
         let kv_cache = KVCache::new(
-            &backend,
+            backend,
             config.num_hidden_layers,
             num_heads,
             head_dim,
@@ -287,15 +321,15 @@ mod tests {
         let softmax_temp_shape = TensorShape::from_dims(&[current_seq_len]);
 
         let q_data = create_random_data(seq_len * num_heads * head_dim, 0.0, 1.0);
-        let q = DeviceTensor::from_host_vec(&backend, q_data, q_shape)
+        let q = DeviceTensor::from_host_vec(backend, q_data, q_shape)
             .expect("Failed to create Q tensor");
-        let attention_scores = DeviceTensor::empty(&backend, attention_scores_shape)
+        let attention_scores = DeviceTensor::empty(backend, attention_scores_shape)
             .expect("Failed to create attention scores");
-        let softmax_temp = DeviceTensor::empty(&backend, softmax_temp_shape)
+        let softmax_temp = DeviceTensor::empty(backend, softmax_temp_shape)
             .expect("Failed to create softmax temp");
 
         let kernels =
-            HipAttentionKernels::new(&backend).expect("Failed to initialize attention kernels");
+            HipAttentionKernels::new(backend).expect("Failed to initialize attention kernels");
 
         // Test complete attention computation
         let layer_id = 0;
@@ -323,24 +357,34 @@ mod tests {
                 val
             );
         }
+
+        drop(q);
+        drop(attention_scores);
+        drop(softmax_temp);
+        drop(kv_cache);
+        drop(output);
+        fixture.assert_no_leak(5);
     }
 
     /// Test attention kernel error handling
     #[test]
     #[cfg(feature = "rocm")]
+    #[serial]
     fn test_attention_kernel_error_handling() {
-        let backend = HipBackend::new().expect("Failed to create HIP backend");
+        let fixture = rocmforge::GPU_FIXTURE.as_ref()
+            .expect("GPU not available - test skipped");
+        let backend = fixture.backend();
         let kernels =
-            HipAttentionKernels::new(&backend).expect("Failed to initialize attention kernels");
+            HipAttentionKernels::new(backend).expect("Failed to initialize attention kernels");
 
         // Test invalid tensor shapes
         let wrong_shape = TensorShape::from_dims(&[5, 10]); // 2D instead of 3D
-        let q = DeviceTensor::empty(&backend, wrong_shape).expect("Failed to create tensor");
+        let q = DeviceTensor::empty(backend, wrong_shape).expect("Failed to create tensor");
         let k_shape = TensorShape::from_dims(&[10, 8, 128]);
-        let k = DeviceTensor::empty(&backend, k_shape).expect("Failed to create tensor");
+        let k = DeviceTensor::empty(backend, k_shape).expect("Failed to create tensor");
         let output_shape = TensorShape::from_dims(&[5, 10]);
         let mut output =
-            DeviceTensor::empty(&backend, output_shape).expect("Failed to create output");
+            DeviceTensor::empty(backend, output_shape).expect("Failed to create output");
 
         // Should fail with invalid Q shape
         let result = kernels.compute_qk_t(&q, &k, &mut output);
@@ -348,16 +392,22 @@ mod tests {
 
         // Test mismatched dimensions
         let q_shape = TensorShape::from_dims(&[5, 8, 128]);
-        let q = DeviceTensor::empty(&backend, q_shape).expect("Failed to create Q tensor");
+        let q = DeviceTensor::empty(backend, q_shape).expect("Failed to create Q tensor");
         let k_wrong_shape = TensorShape::from_dims(&[10, 16, 64]); // Different num_heads/head_dim
         let k_wrong =
-            DeviceTensor::empty(&backend, k_wrong_shape).expect("Failed to create K tensor");
+            DeviceTensor::empty(backend, k_wrong_shape).expect("Failed to create K tensor");
 
         let result = kernels.compute_qk_t(&q, &k_wrong, &mut output);
         assert!(
             result.is_err(),
             "QK^T should fail with mismatched dimensions"
         );
+
+        drop(q);
+        drop(k);
+        drop(k_wrong);
+        drop(output);
+        fixture.assert_no_leak(5);
     }
 
     #[test]

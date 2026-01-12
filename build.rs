@@ -52,6 +52,7 @@ fn compile_hip_kernels() {
         ("kernels/swiglu.hip", "SWIGLU_HSACO", "swiglu_kernel"),
         ("kernels/rms_norm.hip", "RMS_NORM_HSACO", "rms_norm_kernel"),
         ("kernels/mxfp_dequant.hip", "MXFP_DEQUANT_HSACO", "mxfp4_to_fp32_kernel"),
+        ("kernels/mqa_kv_replicate.hip", "MQA_KV_REPLICATE_HSACO", "mqa_kv_replicate_kernel"),
     ];
 
     for (src_file, env_name, kernel_name) in &kernels {

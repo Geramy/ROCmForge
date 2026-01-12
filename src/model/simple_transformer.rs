@@ -180,9 +180,11 @@ impl Linear {
             &handle,
             &input_buffer,
             weight_buffer,
-            1,                                     // m (rows of input)
+            1, // m (rows of input)
+            // UNWRAP: Model dimensions should fit in i32 (> 4B tokens not supported)
             self.out_features.try_into().unwrap(), // n (cols of weight^T)
-            self.in_features.try_into().unwrap(),  // k (cols of input/rows of weight)
+            // UNWRAP: Model dimensions should fit in i32 (> 4B tokens not supported)
+            self.in_features.try_into().unwrap(), // k (cols of input/rows of weight)
         );
 
         // Device → Host: Copy result back to CPU

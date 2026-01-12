@@ -10,6 +10,7 @@ pub mod gpu;
 pub mod kernels;
 pub mod mask;
 pub mod multi_query;
+pub mod paged_kernel;
 pub mod rope;
 pub mod softmax;
 
@@ -57,6 +58,16 @@ mod causal_mask_tests;
 #[cfg(test)]
 #[cfg(feature = "rocm")]
 mod flash_causal_tests;
+
+// Phase 3: Paged Attention tests
+#[cfg(test)]
+#[cfg(feature = "rocm")]
+mod paged_tests;
+
+// Phase 19.2: MQA KV Replication Kernel Integration tests
+#[cfg(test)]
+#[cfg(feature = "rocm")]
+mod mqa_kernel_tests;
 
 #[cfg(feature = "rocm")]
 use crate::backend::{DeviceTensor, HipBackend};

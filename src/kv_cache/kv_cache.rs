@@ -1,6 +1,8 @@
 //! Paged KV cache for efficient GPU memory management
 
 use crate::backend::{HipBackend, HipBuffer, HipError};
+use super::page_table::PageTable;
+use super::block_allocator::BlockAllocator;
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, RwLock};
@@ -341,6 +343,10 @@ pub struct KvCache {
     block_pool: RwLock<PhysicalBlockPool>,
     /// Block table: logical ID -> physical block mapping (PagedAttention)
     block_table: RwLock<HashMap<BlockId, BlockTable>>,
+    /// Page table for mapping logical positions to physical blocks
+    page_table: RwLock<PageTable>,
+    /// Block allocator for O(1) block allocation
+    block_allocator: RwLock<BlockAllocator>,
     /// Legacy: sequence-owned pages (for backward compatibility)
     pages: RwLock<HashMap<u32, CachePage>>,
     sequences: RwLock<HashMap<u32, SequenceCache>>,
@@ -362,11 +368,24 @@ impl KvCache {
             &backend,
         )?;
 
+        // Initialize PageTable with default block size
+        let page_table = PageTable::new();
+
+        // Initialize BlockAllocator
+        let block_allocator = BlockAllocator::new(
+            config.max_pages,
+            config.page_size,
+            config.num_heads,
+            config.head_dim,
+        );
+
         Ok(KvCache {
             config,
             backend,
             block_pool: RwLock::new(block_pool),
             block_table: RwLock::new(HashMap::new()),
+            page_table: RwLock::new(page_table),
+            block_allocator: RwLock::new(block_allocator),
             pages: RwLock::new(HashMap::new()),
             sequences: RwLock::new(HashMap::new()),
             free_pages: RwLock::new(Vec::new()),
@@ -519,6 +538,22 @@ impl KvCache {
                 free_pages.push(page_id);
             }
         }
+
+        // PHASE 2 FIX: Also deallocate blocks from paged system
+        // Get blocks from page table before removing sequence
+        let blocks_to_deallocate = self.page_table.read()?
+            .get_sequence_blocks(sequence_id)
+            .map(|v| v.to_vec());
+
+        if let Some(blocks) = blocks_to_deallocate {
+            let mut allocator = self.block_allocator.write()?;
+            for &block_id in &blocks {
+                allocator.deallocate(block_id);
+            }
+        }
+
+        // Remove from page table
+        self.page_table.write()?.remove_sequence(sequence_id);
 
         Ok(())
     }
@@ -677,6 +712,112 @@ impl KvCache {
         }
 
         Ok(())
+    }
+
+    // ========== Phase 2: PageTable + BlockAllocator Integration ==========
+
+    /// Append token with paged KV cache using PageTable and BlockAllocator
+    ///
+    /// This method integrates PageTable (for mapping logical positions to physical blocks)
+    /// with BlockAllocator (for O(1) block allocation) to provide efficient paged attention.
+    ///
+    /// # Arguments
+    /// * `sequence_id` - The sequence to append the token to
+    /// * `token` - The token to append
+    ///
+    /// # Behavior
+    /// - Checks if we need a new block (every `block_size` tokens)
+    /// - Allocates from BlockAllocator if needed
+    /// - Updates PageTable with new block mapping
+    /// - Delegates to existing append_token() for actual storage
+    pub fn append_token_paged(&mut self, sequence_id: u32, token: u32) -> KvCacheResult<()> {
+        // Get current sequence length
+        let current_tokens = self.get_sequence_length(sequence_id).unwrap_or(0);
+        let block_size = self.config.page_size;
+
+        // Check if we need to allocate a page for the sequence
+        let has_page = {
+            let sequences = self.sequences.read()?;
+            sequences.get(&sequence_id).is_some()
+        };
+
+        if !has_page {
+            // Allocate first page for new sequence
+            self.allocate_page(sequence_id)?;
+        }
+
+        // Check if we need a new block
+        if current_tokens > 0 && current_tokens % block_size == 0 {
+            // Time to allocate a new block
+            if let Some(block_id) = self.block_allocator.write()?.allocate() {
+                // Update page table with new block
+                self.page_table.write()?.append_block(sequence_id, block_id);
+
+                tracing::debug!(
+                    "Allocated new block {} for sequence {} at token position {}",
+                    block_id, sequence_id, current_tokens
+                );
+            } else {
+                return Err(KvCacheError::CapacityExceeded);
+            }
+        } else if current_tokens == 0 {
+            // First token - allocate initial block
+            if let Some(block_id) = self.block_allocator.write()?.allocate() {
+                self.page_table.write()?.append_block(sequence_id, block_id);
+
+                tracing::debug!(
+                    "Allocated initial block {} for new sequence {}",
+                    block_id, sequence_id
+                );
+            } else {
+                return Err(KvCacheError::CapacityExceeded);
+            }
+        }
+
+        // Delegate to existing append_token for actual storage
+        // This handles token storage and sequence tracking
+        self.append_token(sequence_id, token)
+    }
+
+    /// Get the physical block for a given sequence and token position
+    ///
+    /// This uses the PageTable to map logical positions to physical blocks.
+    ///
+    /// # Arguments
+    /// * `sequence_id` - The sequence to query
+    /// * `token_pos` - The logical token position within the sequence
+    ///
+    /// # Returns
+    /// * `Some((block_id, offset))` - The physical block ID and offset within that block
+    /// * `None` - If the sequence doesn't exist or position is out of range
+    pub fn get_block_for_position(
+        &self,
+        sequence_id: u32,
+        token_pos: usize,
+    ) -> KvCacheResult<Option<(u32, usize)>> {
+        Ok(self.page_table.read()?.get_block_for_position(sequence_id, token_pos))
+    }
+
+    /// Get all blocks for a sequence using PageTable
+    ///
+    /// # Arguments
+    /// * `sequence_id` - The sequence to query
+    ///
+    /// # Returns
+    /// * `Some(&[u32])` - Slice of block IDs
+    /// * `None` - If the sequence doesn't exist
+    pub fn get_sequence_blocks_from_page_table(
+        &self,
+        sequence_id: u32,
+    ) -> KvCacheResult<Option<Vec<u32>>> {
+        Ok(self.page_table.read()?.get_sequence_blocks(sequence_id).map(|v| v.to_vec()))
+    }
+
+    /// Get BlockAllocator statistics
+    pub fn get_block_allocator_stats(&self) -> (usize, usize) {
+        let allocator = self.block_allocator.read()
+            .expect("Block allocator lock poisoned");
+        (allocator.total_blocks(), allocator.free_blocks())
     }
 
     // ========== PagedAttention Block Management ==========
@@ -1129,5 +1270,125 @@ mod tests {
             // Check that retrieved tokens match the first success_count tokens
             assert_eq!(&retrieved[..], &tokens[..success_count]);
         }
+    }
+
+    // ========== Phase 2: PageTable + BlockAllocator Integration Tests ==========
+
+    #[test]
+    fn test_append_token_paged_initial_allocation() {
+        let backend = HipBackend::new().unwrap();
+        // Use page_size=4 for faster testing
+        let config = CacheConfig::new(4, 10, 32, 128, 24).unwrap();
+        let mut cache = KvCache::new(config, backend).unwrap();
+
+        // First token should allocate initial block
+        cache.append_token_paged(1, 42).unwrap();
+
+        // Check block allocator stats
+        let (total, free) = cache.get_block_allocator_stats();
+        assert_eq!(total, 10);
+        assert_eq!(free, 9); // One block allocated
+
+        // Check page table has the block
+        let blocks = cache.get_sequence_blocks_from_page_table(1).unwrap();
+        assert!(blocks.is_some());
+        assert_eq!(blocks.unwrap().len(), 1);
+    }
+
+    #[test]
+    fn test_append_token_paged_multiple_blocks() {
+        let backend = HipBackend::new().unwrap();
+        let config = CacheConfig::new(4, 10, 32, 128, 24).unwrap();
+        let mut cache = KvCache::new(config, backend).unwrap();
+
+        // Append 9 tokens (should span 3 blocks of size 4)
+        for i in 0..9 {
+            cache.append_token_paged(1, i).unwrap();
+        }
+
+        // Check block allocator stats
+        let (total, free) = cache.get_block_allocator_stats();
+        assert_eq!(total, 10);
+        assert_eq!(free, 7); // 3 blocks allocated (0, 4, 8 tokens trigger allocations)
+
+        // Check page table has 3 blocks
+        let blocks = cache.get_sequence_blocks_from_page_table(1).unwrap();
+        assert!(blocks.is_some());
+        assert_eq!(blocks.unwrap().len(), 3);
+    }
+
+    #[test]
+    fn test_get_block_for_position() {
+        let backend = HipBackend::new().unwrap();
+        let config = CacheConfig::new(16, 10, 32, 128, 24).unwrap();
+        let mut cache = KvCache::new(config, backend).unwrap();
+
+        // Append some tokens
+        for i in 0..20 {
+            cache.append_token_paged(1, i).unwrap();
+        }
+
+        // Position 0 should be in block 0, offset 0
+        let result = cache.get_block_for_position(1, 0).unwrap();
+        assert_eq!(result, Some((0, 0)));
+
+        // Position 10 should be in block 0, offset 10
+        let result = cache.get_block_for_position(1, 10).unwrap();
+        assert_eq!(result, Some((0, 10)));
+
+        // Position 16 should be in block 1, offset 0
+        let result = cache.get_block_for_position(1, 16).unwrap();
+        assert_eq!(result, Some((1, 0)));
+
+        // Position 20 should be in block 1, offset 4 (block_size=16)
+        // PageTable doesn't check actual token count - it maps positions to blocks
+        let result = cache.get_block_for_position(1, 20).unwrap();
+        assert_eq!(result, Some((1, 4)));
+
+        // Position 32 would be in block 2 (but we only have 20 tokens)
+        // PageTable will return None because block 2 doesn't exist
+        let result = cache.get_block_for_position(1, 32).unwrap();
+        assert_eq!(result, None);
+    }
+
+    #[test]
+    fn test_get_block_allocator_stats() {
+        let backend = HipBackend::new().unwrap();
+        let config = CacheConfig::new(16, 100, 32, 128, 24).unwrap();
+        let cache = KvCache::new(config, backend).unwrap();
+
+        // Initial stats
+        let (total, free) = cache.get_block_allocator_stats();
+        assert_eq!(total, 100);
+        assert_eq!(free, 100);
+    }
+
+    #[test]
+    fn test_multiple_sequences_paged() {
+        let backend = HipBackend::new().unwrap();
+        let config = CacheConfig::new(4, 20, 32, 128, 24).unwrap();
+        let mut cache = KvCache::new(config, backend).unwrap();
+
+        // Sequence 1: 5 tokens (2 blocks)
+        for i in 0..5 {
+            cache.append_token_paged(1, i).unwrap();
+        }
+
+        // Sequence 2: 3 tokens (1 block)
+        for i in 0..3 {
+            cache.append_token_paged(2, i).unwrap();
+        }
+
+        // Check block allocator stats
+        let (total, free) = cache.get_block_allocator_stats();
+        assert_eq!(total, 20);
+        assert_eq!(free, 17); // 3 blocks allocated total
+
+        // Verify each sequence has correct blocks
+        let blocks1 = cache.get_sequence_blocks_from_page_table(1).unwrap();
+        assert_eq!(blocks1.unwrap().len(), 2);
+
+        let blocks2 = cache.get_sequence_blocks_from_page_table(2).unwrap();
+        assert_eq!(blocks2.unwrap().len(), 1);
     }
 }

@@ -11,6 +11,15 @@ pub mod simple_transformer;
 #[cfg(test)]
 pub mod position_embedding_tests;
 
+// Include config tests (MQA/GQA detection)
+#[cfg(test)]
+pub mod config_tests;
+
+// Include Phase 5: PagedAttention integration tests
+#[cfg(test)]
+#[cfg(feature = "rocm")]
+pub mod phase5_paged_tests;
+
 pub use config::*;
 pub use execution_plan::*;
 pub use glm_position::*;

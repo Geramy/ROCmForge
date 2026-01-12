@@ -155,14 +155,11 @@ impl GpuBackend {
             // CRITICAL: Synchronize after kernel launch before buffer goes out of scope
             // Without this sync, the kernel may still be executing when scores_gpu is dropped,
             // causing use-after-free and race conditions.
-            unsafe {
-                let sync_result = crate::backend::hip_backend::hipDeviceSynchronize();
-                if sync_result != 0 {
-                    return Err(AttentionError::GpuOperation(format!(
-                        "GPU synchronization failed after scale kernel with code {}",
-                        sync_result
-                    )));
-                }
+            if let Err(e) = crate::backend::hip_backend::synchronize_device() {
+                return Err(AttentionError::GpuOperation(format!(
+                    "GPU synchronization failed after scale kernel: {}",
+                    e
+                )));
             }
         }
 
@@ -213,14 +210,11 @@ impl GpuBackend {
 
                 // CRITICAL: Synchronize after kernel launch before using results
                 // Ensures kernel completes before copying data back to host.
-                unsafe {
-                    let sync_result = crate::backend::hip_backend::hipDeviceSynchronize();
-                    if sync_result != 0 {
-                        return Err(AttentionError::GpuOperation(format!(
-                            "GPU synchronization failed after mask kernel with code {}",
-                            sync_result
-                        )));
-                    }
+                if let Err(e) = crate::backend::hip_backend::synchronize_device() {
+                    return Err(AttentionError::GpuOperation(format!(
+                        "GPU synchronization failed after mask kernel: {}",
+                        e
+                    )));
                 }
 
                 scores_gpu.copy_to_host(&mut scores).map_err(|e| {
@@ -259,14 +253,11 @@ impl GpuBackend {
 
             // CRITICAL: Synchronize after kernel launch before using results
             // Ensures kernel completes before copying data back to host.
-            unsafe {
-                let sync_result = crate::backend::hip_backend::hipDeviceSynchronize();
-                if sync_result != 0 {
-                    return Err(AttentionError::GpuOperation(format!(
-                        "GPU synchronization failed after softmax kernel with code {}",
-                        sync_result
-                    )));
-                }
+            if let Err(e) = crate::backend::hip_backend::synchronize_device() {
+                return Err(AttentionError::GpuOperation(format!(
+                    "GPU synchronization failed after softmax kernel: {}",
+                    e
+                )));
             }
 
             scores_gpu.copy_to_host(&mut scores).map_err(|e| {
