@@ -1,7 +1,28 @@
 use rocmforge::backend::hip_backend::ModelRuntime;
 
+// Initialize tracing for debugging segment core faults
+fn init_tracing() {
+    use tracing_subscriber::{fmt, EnvFilter};
+
+    // Set default log level to info, but allow override via RUST_LOG
+    let filter = EnvFilter::from_default_env()
+        .add_directive("rocmforge=trace".parse().unwrap())
+        .add_directive("hip_backend=trace".parse().unwrap());
+
+    fmt()
+        .with_env_filter(filter)
+        .with_target(true)
+        .with_thread_ids(true)
+        .with_thread_names(true)
+        .init();
+}
+
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // Initialize tracing for comprehensive GPU debugging
+    init_tracing();
+
+    tracing::info!("🚀 Testing ROCmForge inference with Llama 3.2 1B model");
     println!("🚀 Testing ROCmForge inference with Llama 3.2 1B model");
 
     // Model path

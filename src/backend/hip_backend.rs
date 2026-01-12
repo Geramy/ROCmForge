@@ -429,12 +429,31 @@ struct HipBufferInner {
 
 impl HipBuffer {
     pub fn new(size: usize) -> HipResult<Self> {
+        // Capture stack trace for debugging segfaults
+        #[cfg(feature = "std")]
+        let backtrace = std::backtrace::Backtrace::capture();
+
+        tracing::trace!("HipBuffer::new: Allocating {} bytes of GPU memory", size);
+        #[cfg(feature = "std")]
+        tracing::trace!("HipBuffer::new: Call stack:\n{}", backtrace);
+
+        // Validate allocation size to prevent segfaults
+        if size == 0 {
+            tracing::warn!("HipBuffer::new: Zero-size allocation requested - this may cause issues");
+        }
+        if size > 1024 * 1024 * 1024 { // 1GB warning
+            tracing::warn!("HipBuffer::new: Large allocation requested: {} MB", size / (1024 * 1024));
+        }
+
         let mut ptr: *mut c_void = ptr::null_mut();
 
         // Use hipMalloc to allocate device memory
+        tracing::trace!("HipBuffer::new: Calling hipMalloc for {} bytes", size);
         let result = unsafe { hipMalloc(&mut ptr, size) };
+        tracing::trace!("HipBuffer::new: hipMalloc returned result={}, ptr={:?}", result, ptr);
 
         if result != HIP_SUCCESS {
+            tracing::error!("HipBuffer::new: hipMalloc failed with code {} for {} bytes", result, size);
             return Err(HipError::MemoryAllocationFailed(format!(
                 "hipMalloc failed with code {} for {} bytes",
                 result, size
@@ -442,12 +461,14 @@ impl HipBuffer {
         }
 
         if ptr.is_null() {
+            tracing::error!("HipBuffer::new: hipMalloc returned null pointer for {} bytes", size);
             return Err(HipError::MemoryAllocationFailed(format!(
                 "hipMalloc returned null pointer for {} bytes",
                 size
             )));
         }
 
+        tracing::debug!("HipBuffer::new: Successfully allocated {} bytes at {:?}", size, ptr);
         Ok(HipBuffer {
             inner: Arc::new(HipBufferInner { ptr, size, offset: 0 }),
         })
@@ -1588,6 +1609,26 @@ impl HipBackend {
         args: &[*mut c_void],
         shared_mem_bytes: u32,
     ) -> HipResult<()> {
+        tracing::trace!("launch_kernel_with_module_shared: Launching kernel with grid={:?}, block={:?}, shared_mem={}, args_len={}",
+                       grid_dim, block_dim, shared_mem_bytes, args.len());
+
+        // Validate kernel parameters to prevent segfaults
+        if grid_dim.0 == 0 || grid_dim.1 == 0 || grid_dim.2 == 0 {
+            tracing::error!("launch_kernel_with_module_shared: Invalid grid dimensions: {:?}", grid_dim);
+            return Err(HipError::KernelLaunchFailed("Grid dimensions cannot be zero".to_string()));
+        }
+        if block_dim.0 == 0 || block_dim.1 == 0 || block_dim.2 == 0 {
+            tracing::error!("launch_kernel_with_module_shared: Invalid block dimensions: {:?}", block_dim);
+            return Err(HipError::KernelLaunchFailed("Block dimensions cannot be zero".to_string()));
+        }
+
+        // Check for potentially problematic parameter combinations
+        let total_threads = (grid_dim.0 * grid_dim.1 * grid_dim.2 * block_dim.0 * block_dim.1 * block_dim.2) as u64;
+        if total_threads > 1_000_000_000 { // 1 billion threads
+            tracing::warn!("launch_kernel_with_module_shared: Very large kernel launch: {} total threads", total_threads);
+        }
+
+        tracing::trace!("launch_kernel_with_module_shared: Calling hipModuleLaunchKernel");
         let result = unsafe {
             hipModuleLaunchKernel(
                 kernel.as_ptr(),
@@ -1603,6 +1644,7 @@ impl HipBackend {
                 ptr::null_mut(), // extra
             )
         };
+        tracing::trace!("launch_kernel_with_module_shared: hipModuleLaunchKernel returned {}", result);
 
         if result != HIP_SUCCESS {
             let error_msg = unsafe {
@@ -1615,12 +1657,14 @@ impl HipBackend {
                         .into_owned()
                 }
             };
+            tracing::error!("launch_kernel_with_module_shared: Kernel launch failed with code {}: {}", result, error_msg);
             return Err(HipError::KernelLaunchFailed(format!(
                 "Kernel launch failed: {}",
                 error_msg
             )));
         }
 
+        tracing::trace!("launch_kernel_with_module_shared: Kernel launched successfully");
         Ok(())
     }
 
