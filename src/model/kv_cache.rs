@@ -212,7 +212,15 @@ impl KVCache {
     ) -> KVCacheResult<(DeviceTensor, DeviceTensor)> {
         // Use get() to create views, then copy them to new tensors
         let (key_view, value_view) = self.get(layer)?;
-        Ok((key_view, value_view))
+
+        // Create new tensors and copy the data
+        let mut key_copy = DeviceTensor::empty(&self.backend, key_view.shape().clone())?;
+        let mut value_copy = DeviceTensor::empty(&self.backend, value_view.shape().clone())?;
+
+        key_copy.copy_from_device_buffer(key_view.buffer())?;
+        value_copy.copy_from_device_buffer(value_view.buffer())?;
+
+        Ok((key_copy, value_copy))
     }
 
     /// Get current sequence length for a layer

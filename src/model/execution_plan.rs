@@ -264,6 +264,47 @@ impl ExecutionPlan {
         }
     }
 
+    /// Get or load fused QKV tensor, handling separate Q/K/V weights for Qwen2
+    fn get_or_load_fused_qkv(&self, q_lazy: &Arc<LazyTensor>) -> HipResult<DeviceTensor> {
+        match &**q_lazy {
+            LazyTensor::Unloaded { name, .. } => {
+                if name.contains(".attn_q.weight") {
+                    // Try to load fused QKV first (LLaMA style)
+                    let fused_name = name.replace(".attn_q.weight", ".attention.wq.weight");
+                    if let Some(fused_lazy) = self.loader.lazy_tensors.get(&fused_name) {
+                        tracing::debug!("Loading fused QKV tensor '{}' for layer", fused_name);
+                        return self.get_or_load_tensor(&Arc::new(fused_lazy.clone()));
+                    }
+
+                    // If no fused, load separate Q/K/V and concatenate (Qwen2 style)
+                    let k_name = name.replace(".attn_q.weight", ".attn_k.weight");
+                    let v_name = name.replace(".attn_q.weight", ".attn_v.weight");
+
+                    if let (Some(k_lazy), Some(v_lazy)) = (
+                        self.loader.lazy_tensors.get(&k_name),
+                        self.loader.lazy_tensors.get(&v_name),
+                    ) {
+                        tracing::debug!("Loading separate Q/K/V tensors and concatenating for layer");
+                        let q_tensor = self.get_or_load_tensor(q_lazy)?;
+                        let k_tensor = self.get_or_load_tensor(&Arc::new(k_lazy.clone()))?;
+                        let v_tensor = self.get_or_load_tensor(&Arc::new(v_lazy.clone()))?;
+                        return ExecutionPlan::concatenate_qkv_tensors(self.backend.as_ref(), &q_tensor, &k_tensor, &v_tensor, &self.config);
+                    }
+                }
+
+                // Fall back to loading the tensor as-is
+                self.get_or_load_tensor(q_lazy)
+            }
+            LazyTensor::Gpu { tensor, .. } => {
+                Ok(DeviceTensor::clone(tensor))
+            }
+        }
+    }
+
+
+
+
+
     /// Detect model architecture from available tensor names
     ///
     /// Scans tensor names to identify the architecture pattern:
@@ -686,7 +727,7 @@ impl ExecutionPlan {
         let _hidden_size = input_shape[1];
 
         // Load all layer weights on-demand (cached after first access)
-        let qkv_weight = self.get_or_load_tensor(&layer_plan.qkv_weight)?;
+        let qkv_weight = self.get_or_load_fused_qkv(&layer_plan.qkv_weight)?;
         let qkv_bias = layer_plan.qkv_bias.as_ref()
             .map(|b| self.get_or_load_tensor(b))
             .transpose()?;

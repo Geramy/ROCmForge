@@ -58,7 +58,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Run inference (decode_step)
     println!("⚡ Running inference on GPU...");
     let start_time = std::time::Instant::now();
-    let logits = runtime.decode_step(&embeddings)?;
+    let logits = runtime.decode_step(&embeddings).map_err(|e| {
+        eprintln!("❌ Inference failed with error: {}", e);
+        eprintln!("🔍 This appears to be a memory copy bounds error in the attention mechanism");
+        eprintln!("💡 The error suggests an offset calculation bug where offset + length > buffer size");
+        e
+    })?;
     let inference_time = start_time.elapsed();
 
     println!("✅ Inference completed in {:.2}ms", inference_time.as_millis());
