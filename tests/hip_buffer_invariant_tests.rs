@@ -12,7 +12,7 @@ use rocmforge::loader::mmap_loader::TensorShape;
 #[serial]
 fn hip_buffer_alloc_size_invariant() {
     // Test that HipBuffer size remains constant after operations
-    let fixture = rocmforge::GPU_FIXTURE.as_ref()
+    let fixture = GPU_FIXTURE.as_ref()
         .expect("GPU not available - test skipped");
     let backend = fixture.backend();
 
@@ -58,7 +58,7 @@ fn hip_buffer_alloc_size_invariant() {
 #[serial]
 fn test_attention_cpu_fallback_buffer_size_consistency() {
     // Test the exact sequence that causes the "Destination buffer too small: 16 > 4" error
-    let fixture = rocmforge::GPU_FIXTURE.as_ref()
+    let fixture = GPU_FIXTURE.as_ref()
         .expect("GPU not available - test skipped");
     let backend = fixture.backend();
 
@@ -121,7 +121,7 @@ fn test_attention_cpu_fallback_buffer_size_consistency() {
 #[serial]
 fn device_tensor_size_bytes_consistency() {
     // Test that DeviceTensor size() always returns bytes and len() returns elements
-    let fixture = rocmforge::GPU_FIXTURE.as_ref()
+    let fixture = GPU_FIXTURE.as_ref()
         .expect("GPU not available - test skipped");
     let backend = fixture.backend();
 

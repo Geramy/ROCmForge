@@ -3,8 +3,8 @@
 //! Tests the complete decode_step() pipeline in ModelRuntime using real ExecutionPlan,
 //! KVCache, and existing GPU/CPU operations.
 
+use rocmforge::backend::gpu_test_common::GPU_FIXTURE;
 use rocmforge::backend::hip_backend::{DeviceTensor, HipBackend, ModelRuntime};
-use serial_test::serial;
 use rocmforge::backend::scratch::ScratchBufferManager;
 use rocmforge::loader::mmap_loader::TensorShape;
 use rocmforge::model::config::{ModelConfig, ModelType};
@@ -19,11 +19,9 @@ mod tests {
     #[test]
     fn test_decode_step_single_layer_cpu_reference() {
         // Initialize HIP backend
-        let fixture = rocmforge::GPU_FIXTURE.as_ref()
+        let fixture = GPU_FIXTURE.as_ref()
         .expect("GPU not available - test skipped");
-    let backend = fixture.backend();
-        assert!(backend.is_ok(), "Failed to initialize HIP backend");
-        let backend = backend.unwrap();
+        let backend = fixture.backend();
 
         // Create minimal model configuration for testing
         let config = ModelConfig {
@@ -31,8 +29,9 @@ mod tests {
             intermediate_size: 256,
             num_hidden_layers: 1,
             num_attention_heads: 4,
+            num_kv_heads: Some(4_usize),
             head_dim: 16, // hidden_size / num_attention_heads
-            max_position_embeddings: 128,
+            max_position_embeddings: 128_usize,
             vocab_size: 1000,
             model_type: ModelType::Llama,
             rms_norm_eps: 1e-6,
@@ -45,7 +44,7 @@ mod tests {
         let execution_plan = plan_result.unwrap();
 
         // Create KV cache
-        let mut kv_cache = KVCache::new(backend,
+        let mut kv_cache = KVCache::new(&backend,
             config.num_hidden_layers,
             config.num_attention_heads,
             config.head_dim,
@@ -54,7 +53,7 @@ mod tests {
         .unwrap();
 
         // Create scratch buffer manager
-        let scratch = ScratchBufferManager::new(backend,
+        let scratch = ScratchBufferManager::new(&backend,
             config.num_attention_heads,
             config.max_position_embeddings,
             config.head_dim,
@@ -110,13 +109,9 @@ mod tests {
     #[test]
     fn test_decode_step_gpu_matches_cpu_within_tolerance() {
         // Skip test gracefully if ROCm is not available
-        let fixture = rocmforge::GPU_FIXTURE.as_ref()
+        let fixture = GPU_FIXTURE.as_ref()
         .expect("GPU not available - test skipped");
-    let backend = fixture.backend();
-        if backend.is_err() {
-            return;
-        }
-        let backend = backend.unwrap();
+        let backend = fixture.backend();
 
         // Create minimal model configuration
         let config = ModelConfig {
@@ -124,6 +119,7 @@ mod tests {
             intermediate_size: 128,
             num_hidden_layers: 1,
             num_attention_heads: 4,
+            num_kv_heads: Some(4),
             head_dim: 8, // hidden_size / num_attention_heads
             max_position_embeddings: 64,
             vocab_size: 1000,
@@ -144,7 +140,7 @@ mod tests {
             .collect();
 
         // GPU path test
-        let mut kv_cache_gpu = KVCache::new(backend,
+        let mut kv_cache_gpu = KVCache::new(&backend,
             config.num_hidden_layers,
             config.num_attention_heads,
             config.head_dim,
@@ -152,7 +148,7 @@ mod tests {
         )
         .unwrap();
 
-        let scratch_gpu = ScratchBufferManager::new(backend,
+        let scratch_gpu = ScratchBufferManager::new(&backend,
             config.num_attention_heads,
             config.max_position_embeddings,
             config.head_dim,
@@ -202,11 +198,9 @@ mod tests {
     #[test]
     fn test_decode_step_updates_kv_cache_correctly() {
         // Initialize backend
-        let fixture = rocmforge::GPU_FIXTURE.as_ref()
+        let fixture = GPU_FIXTURE.as_ref()
         .expect("GPU not available - test skipped");
-    let backend = fixture.backend();
-        assert!(backend.is_ok(), "Failed to initialize HIP backend");
-        let backend = backend.unwrap();
+        let backend = fixture.backend();
 
         // Create model configuration
         let config = ModelConfig {
@@ -214,6 +208,7 @@ mod tests {
             intermediate_size: 128,
             num_hidden_layers: 2, // Test with multiple layers
             num_attention_heads: 4,
+            num_kv_heads: Some(4),
             head_dim: 8,
             max_position_embeddings: 64,
             vocab_size: 1000,
@@ -228,7 +223,7 @@ mod tests {
         let execution_plan = plan_result.unwrap();
 
         // Create KV cache with initial length 0
-        let mut kv_cache = KVCache::new(backend,
+        let mut kv_cache = KVCache::new(&backend,
             config.num_hidden_layers,
             config.num_attention_heads,
             config.head_dim,
@@ -240,7 +235,7 @@ mod tests {
         assert_eq!(kv_cache.get_current_length(0).unwrap(), 0);
 
         // Create scratch buffer
-        let scratch = ScratchBufferManager::new(backend,
+        let scratch = ScratchBufferManager::new(&backend,
             config.num_attention_heads,
             config.max_position_embeddings,
             config.head_dim,

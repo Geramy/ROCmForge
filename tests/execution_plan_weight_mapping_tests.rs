@@ -1,3 +1,4 @@
+use rocmforge::backend::gpu_test_common::GPU_FIXTURE;
 use rocmforge::backend::hip_backend::{DeviceTensor, HipBackend};
 use serial_test::serial;
 use rocmforge::loader::gguf::GgufLoader;
@@ -8,9 +9,9 @@ use std::sync::Arc;
 
 /// Helper function to create a test backend
 fn create_test_backend() -> Arc<HipBackend> {
-    let fixture = rocmforge::GPU_FIXTURE.as_ref()
+    let fixture = GPU_FIXTURE.as_ref()
         .expect("GPU not available - test skipped");
-    let backend = fixture.backend();
+    Arc::clone(fixture.backend())
 }
 
 /// Helper function to get tensor shape from LazyTensor (Phase 2: handles unloaded tensors)
@@ -130,7 +131,7 @@ fn test_map_mlp_weights() {
     let config = execution_plan.config();
 
     // Validate MLP gate projection weight shape: [intermediate_size, hidden_size]
-    let gate_proj_shape = get_tensor_shape(&first_layer.mlp_gate_proj);
+    let gate_proj_shape = get_lazy_tensor_shape(&first_layer.mlp_gate_proj);
     assert_eq!(gate_proj_shape.len(), 2, "MLP gate projection should be 2D");
     assert_eq!(
         gate_proj_shape[0], config.intermediate_size,
@@ -142,7 +143,7 @@ fn test_map_mlp_weights() {
     );
 
     // Validate MLP up projection weight shape: [intermediate_size, hidden_size]
-    let up_proj_shape = get_tensor_shape(&first_layer.mlp_up_proj);
+    let up_proj_shape = get_lazy_tensor_shape(&first_layer.mlp_up_proj);
     assert_eq!(up_proj_shape.len(), 2, "MLP up projection should be 2D");
     assert_eq!(
         up_proj_shape[0], config.intermediate_size,
@@ -154,7 +155,7 @@ fn test_map_mlp_weights() {
     );
 
     // Validate MLP down projection weight shape: [hidden_size, intermediate_size]
-    let down_proj_shape = get_tensor_shape(&first_layer.mlp_down_proj);
+    let down_proj_shape = get_lazy_tensor_shape(&first_layer.mlp_down_proj);
     assert_eq!(down_proj_shape.len(), 2, "MLP down projection should be 2D");
     assert_eq!(
         down_proj_shape[0], config.hidden_size,

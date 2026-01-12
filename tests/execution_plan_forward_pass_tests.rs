@@ -4,6 +4,7 @@
 //! These tests verify that the forward pass works correctly with real GGUF weights.
 
 use serial_test::serial;
+use rocmforge::backend::gpu_test_common::GPU_FIXTURE;
 use rocmforge::backend::{DeviceTensor, HipBackend};
 use rocmforge::loader::gguf::GgufLoader;
 use rocmforge::loader::TensorShape;
@@ -13,7 +14,7 @@ use rocmforge::model::{ExecutionPlan, ModelConfig};
 #[test]
 #[serial]
 fn test_forward_pass_basic() {
-    let fixture = rocmforge::GPU_FIXTURE.as_ref()
+    let fixture = GPU_FIXTURE.as_ref()
         .expect("GPU not available - test skipped");
     let backend = fixture.backend();
 
@@ -66,7 +67,7 @@ fn test_forward_pass_basic() {
 #[test]
 #[serial]
 fn test_embedding_lookup() {
-    let fixture = rocmforge::GPU_FIXTURE.as_ref()
+    let fixture = GPU_FIXTURE.as_ref()
         .expect("GPU not available - test skipped");
     let backend = fixture.backend();
 
@@ -124,7 +125,7 @@ fn test_embedding_lookup() {
 #[test]
 #[serial]
 fn test_layer_forward_pass() {
-    let fixture = rocmforge::GPU_FIXTURE.as_ref()
+    let fixture = GPU_FIXTURE.as_ref()
         .expect("GPU not available - test skipped");
     let backend = fixture.backend();
 
@@ -167,7 +168,7 @@ fn test_layer_forward_pass() {
 #[test]
 #[serial]
 fn test_forward_pass_varying_seq_len() {
-    let fixture = rocmforge::GPU_FIXTURE.as_ref()
+    let fixture = GPU_FIXTURE.as_ref()
         .expect("GPU not available - test skipped");
     let backend = fixture.backend();
 
@@ -223,7 +224,7 @@ fn test_forward_pass_varying_seq_len() {
 #[test]
 #[serial]
 fn test_forward_pass_error_handling() {
-    let fixture = rocmforge::GPU_FIXTURE.as_ref()
+    let fixture = GPU_FIXTURE.as_ref()
         .expect("GPU not available - test skipped");
     let backend = fixture.backend();
 
@@ -252,7 +253,7 @@ fn test_forward_pass_error_handling() {
 #[test]
 #[serial]
 fn test_forward_pass_inference_pattern() {
-    let fixture = rocmforge::GPU_FIXTURE.as_ref()
+    let fixture = GPU_FIXTURE.as_ref()
         .expect("GPU not available - test skipped");
     let backend = fixture.backend();
 
@@ -303,7 +304,7 @@ fn test_forward_pass_inference_pattern() {
 #[test]
 #[serial]
 fn test_forward_pass_performance() {
-    let fixture = rocmforge::GPU_FIXTURE.as_ref()
+    let fixture = GPU_FIXTURE.as_ref()
         .expect("GPU not available - test skipped");
     let backend = fixture.backend();
 

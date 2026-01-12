@@ -4,11 +4,10 @@
 //! These tests verify that ExecutionPlan can be constructed from GGUF files
 //! using the helper functions for weight mapping.
 
-use rocmforge::backend::{DeviceTensor, HipBackend};
+use rocmforge::backend::gpu_test_common::GPU_FIXTURE;
 use serial_test::serial;
 use rocmforge::loader::gguf::GgufLoader;
-use rocmforge::model::{ExecutionPlan, LayerPlan, ModelConfig};
-use std::collections::HashMap;
+use rocmforge::model::{ExecutionPlan, LayerPlan};
 
 /// Test execution plan construction from GGUF
 #[test]
@@ -19,7 +18,7 @@ fn test_execution_plan_construction() {
     let gguf_loader = GgufLoader::new(gguf_path).expect("Failed to load GGUF");
 
     // Create backend (this will be used for GPU tensor creation)
-    let fixture = rocmforge::GPU_FIXTURE.as_ref()
+    let fixture = GPU_FIXTURE.as_ref()
         .expect("GPU not available - test skipped");
     let backend = fixture.backend();
 
@@ -46,7 +45,7 @@ fn test_execution_plan_construction() {
 fn test_layer_weight_shapes() {
     let gguf_path = "tests/data/tiny_model.gguf";
     let gguf_loader = GgufLoader::new(gguf_path).expect("Failed to load GGUF");
-    let fixture = rocmforge::GPU_FIXTURE.as_ref()
+    let fixture = GPU_FIXTURE.as_ref()
         .expect("GPU not available - test skipped");
     let backend = fixture.backend();
 
@@ -59,7 +58,7 @@ fn test_layer_weight_shapes() {
     for (layer_idx, layer_plan) in execution_plan.layers().iter().enumerate() {
         // Check attention weights - using actual field names
         // QKV is fused in current implementation
-        let qkv_shape = layer_plan.qkv_weight.shape().dims();
+        let qkv_shape = layer_plan.qkv_weight.shape().unwrap();
         assert_eq!(
             qkv_shape.len(),
             2,
@@ -79,7 +78,7 @@ fn test_layer_weight_shapes() {
         );
 
         // Check MLP weights using actual field names
-        let gate_shape = layer_plan.mlp_gate_proj.shape().dims();
+        let gate_shape = layer_plan.mlp_gate_proj.shape().unwrap();
         assert_eq!(
             gate_shape.len(),
             2,
@@ -98,7 +97,7 @@ fn test_layer_weight_shapes() {
         );
 
         // Check LayerNorm weights using actual field names
-        let ln1_shape = layer_plan.norm1_weight.shape().dims();
+        let ln1_shape = layer_plan.norm1_weight.shape().unwrap();
         assert_eq!(
             ln1_shape.len(),
             1,
@@ -123,7 +122,7 @@ fn test_layer_weight_shapes() {
 fn test_all_required_tensors_present() {
     let gguf_path = "tests/data/tiny_model.gguf";
     let gguf_loader = GgufLoader::new(gguf_path).expect("Failed to load GGUF");
-    let fixture = rocmforge::GPU_FIXTURE.as_ref()
+    let fixture = GPU_FIXTURE.as_ref()
         .expect("GPU not available - test skipped");
     let backend = fixture.backend();
 
@@ -136,37 +135,37 @@ fn test_all_required_tensors_present() {
     for (layer_idx, layer_plan) in execution_plan.layers().iter().enumerate() {
         // Check that all required fields are present (non-empty tensors)
         assert!(
-            layer_plan.qkv_weight.shape().total_elements() > 0,
+            layer_plan.qkv_weight.shape().unwrap().iter().product::<usize>() > 0,
             "Layer {}: QKV weight should be present",
             layer_idx
         );
         assert!(
-            layer_plan.o_proj.shape().total_elements() > 0,
+            layer_plan.o_proj.shape().unwrap().iter().product::<usize>() > 0,
             "Layer {}: O projection should be present",
             layer_idx
         );
         assert!(
-            layer_plan.mlp_gate_proj.shape().total_elements() > 0,
+            layer_plan.mlp_gate_proj.shape().unwrap().iter().product::<usize>() > 0,
             "Layer {}: MLP gate should be present",
             layer_idx
         );
         assert!(
-            layer_plan.mlp_up_proj.shape().total_elements() > 0,
+            layer_plan.mlp_up_proj.shape().unwrap().iter().product::<usize>() > 0,
             "Layer {}: MLP up should be present",
             layer_idx
         );
         assert!(
-            layer_plan.mlp_down_proj.shape().total_elements() > 0,
+            layer_plan.mlp_down_proj.shape().unwrap().iter().product::<usize>() > 0,
             "Layer {}: MLP down should be present",
             layer_idx
         );
         assert!(
-            layer_plan.norm1_weight.shape().total_elements() > 0,
+            layer_plan.norm1_weight.shape().unwrap().iter().product::<usize>() > 0,
             "Layer {}: Norm1 weight should be present",
             layer_idx
         );
         assert!(
-            layer_plan.norm2_weight.shape().total_elements() > 0,
+            layer_plan.norm2_weight.shape().unwrap().iter().product::<usize>() > 0,
             "Layer {}: Norm2 weight should be present",
             layer_idx
         );

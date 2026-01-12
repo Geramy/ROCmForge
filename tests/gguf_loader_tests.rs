@@ -8,6 +8,7 @@ use std::fs;
 use std::io::Write;
 use std::path::Path;
 
+use rocmforge::backend::gpu_test_common::GPU_FIXTURE;
 use rocmforge::backend::hip_backend::{DeviceTensor, HipBackend};
 use rocmforge::loader::gguf::{GgufLoader, GgufMetadata, GgufTensor};
 use rocmforge::loader::TensorShape;
@@ -172,8 +173,8 @@ mod tests {
         create_minimal_gguf_file(&gguf_path)?;
 
         // Load and upload to GPU
-        let fixture = rocmforge::GPU_FIXTURE.as_ref()
-            .expect("GPU not available - test skipped");
+    let fixture = GPU_FIXTURE.as_ref()
+        .expect("GPU not available - test skipped");
         let backend = fixture.backend();
         let loader = GgufLoader::new(&gguf_path.to_string_lossy())?;
         let tensors = loader.load_to_gpu(&backend)?;

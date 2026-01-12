@@ -21,7 +21,7 @@ use rocmforge::model::ModelConfig;
 #[serial]
 fn scratch_buffer_reuse_invariant() {
     // Test that scratch buffers are reused without reallocation
-    let fixture = rocmforge::GPU_FIXTURE.as_ref()
+    let fixture = GPU_FIXTURE.as_ref()
         .expect("GPU not available - test skipped");
     let backend = fixture.backend();
 
@@ -103,7 +103,7 @@ fn scratch_buffer_reuse_invariant() {
 #[serial]
 fn kv_cache_append_and_retrieve_consistency() {
     // Test KV cache append and retrieve operations
-    let fixture = rocmforge::GPU_FIXTURE.as_ref()
+    let fixture = GPU_FIXTURE.as_ref()
         .expect("GPU not available - test skipped");
     let backend = fixture.backend();
 
@@ -187,7 +187,7 @@ fn kv_cache_append_and_retrieve_consistency() {
 #[serial]
 fn kv_cache_capacity_boundary() {
     // Test KV cache capacity limits
-    let fixture = rocmforge::GPU_FIXTURE.as_ref()
+    let fixture = GPU_FIXTURE.as_ref()
         .expect("GPU not available - test skipped");
     let backend = fixture.backend();
 

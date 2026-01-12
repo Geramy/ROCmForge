@@ -1,12 +1,4 @@
-//! Edge Case Tests for ROCmForge
-//!
-//! This module contains tests for edge cases and boundary conditions
-//! that may not be covered by the main test suite.
-//!
-//! Following TDD principles, these tests document expected behavior
-//! for edge cases even if some may currently fail.
-
-use rocmforge::backend::HipBackend;
+use rocmforge::backend::gpu_test_common::GPU_FIXTURE;
 use serial_test::serial;
 use rocmforge::kv_cache::{CacheConfig, KvCache, KvCacheError};
 
@@ -19,9 +11,9 @@ use rocmforge::kv_cache::{CacheConfig, KvCache, KvCacheError};
 fn test_kv_cache_empty_initial_state() {
     // Test KV cache with no prior cached keys/values
     // Edge case: Cache should be properly initialized with zero state
-    let fixture = rocmforge::GPU_FIXTURE.as_ref()
+    let fixture = GPU_FIXTURE.as_ref()
         .expect("GPU not available - test skipped");
-    let backend = fixture.backend();
+    let backend = fixture.backend().clone();
     let config = CacheConfig::new(1024, 100, 32, 128, 24).unwrap();
     let cache = KvCache::new(config, backend).unwrap();
 
@@ -37,9 +29,9 @@ fn test_kv_cache_empty_initial_state() {
 fn test_kv_cache_single_token() {
     // Test KV cache with single token (minimum meaningful operation)
     // Edge case: Smallest non-zero allocation
-    let fixture = rocmforge::GPU_FIXTURE.as_ref()
+    let fixture = GPU_FIXTURE.as_ref()
         .expect("GPU not available - test skipped");
-    let backend = fixture.backend();
+    let backend = fixture.backend().clone();
     let config = CacheConfig::new(1024, 10, 4, 32, 2).unwrap();
     let mut cache = KvCache::new(config, backend).unwrap();
 
@@ -58,9 +50,9 @@ fn test_kv_cache_single_token() {
 fn test_kv_cache_eviction_at_capacity() {
     // Test KV cache behavior when reaching max capacity
     // Edge case: Boundary between acceptable and over-capacity
-    let fixture = rocmforge::GPU_FIXTURE.as_ref()
+    let fixture = GPU_FIXTURE.as_ref()
         .expect("GPU not available - test skipped");
-    let backend = fixture.backend();
+    let backend = fixture.backend().clone();
     let page_size = 4;
     let max_pages = 3; // Small cache for testing
     let config = CacheConfig::new(page_size, max_pages, 4, 32, 2).unwrap();
@@ -98,9 +90,9 @@ fn test_kv_cache_eviction_at_capacity() {
 fn test_kv_cache_cross_sequence_isolation() {
     // Test that different sequences are properly isolated in the cache
     // Edge case: Multiple concurrent sequences should not interfere
-    let fixture = rocmforge::GPU_FIXTURE.as_ref()
+    let fixture = GPU_FIXTURE.as_ref()
         .expect("GPU not available - test skipped");
-    let backend = fixture.backend();
+    let backend = fixture.backend().clone();
     let config = CacheConfig::new(1024, 100, 4, 32, 2).unwrap();
     let mut cache = KvCache::new(config, backend).unwrap();
 
@@ -123,9 +115,9 @@ fn test_kv_cache_cross_sequence_isolation() {
 fn test_kv_cache_sequence_reuse() {
     // Test that allocating for same sequence increases page count
     // Edge case: Same sequence ID with multiple allocations
-    let fixture = rocmforge::GPU_FIXTURE.as_ref()
+    let fixture = GPU_FIXTURE.as_ref()
         .expect("GPU not available - test skipped");
-    let backend = fixture.backend();
+    let backend = fixture.backend().clone();
     let config = CacheConfig::new(1024, 100, 4, 32, 2).unwrap();
     let mut cache = KvCache::new(config, backend).unwrap();
 

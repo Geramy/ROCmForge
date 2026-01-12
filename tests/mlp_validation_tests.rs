@@ -4,6 +4,7 @@
 #[cfg(test)]
 mod tests {
     use serial_test::serial;
+    use rocmforge::backend::gpu_test_common::GPU_FIXTURE;
     use rocmforge::backend::hip_backend::{DeviceTensor, HipBackend};
     use rocmforge::loader::mmap_loader::TensorShape;
 
@@ -13,7 +14,7 @@ mod tests {
         // Test that shape validation works correctly
         // This test doesn't require ROCm libraries - just tests the validation logic
 
-        let fixture = rocmforge::GPU_FIXTURE.as_ref()
+        let fixture = GPU_FIXTURE.as_ref()
             .expect("GPU not available - test skipped");
         let backend = fixture.backend();
 
@@ -88,7 +89,7 @@ mod tests {
     #[test]
     #[serial]
     fn test_mlp_swiglu_invalid_shapes() {
-        let fixture = rocmforge::GPU_FIXTURE.as_ref()
+        let fixture = GPU_FIXTURE.as_ref()
             .expect("GPU not available - test skipped");
         let backend = fixture.backend();
 
