@@ -2344,17 +2344,28 @@ impl ModelRuntime {
     /// Load model directly from GGUF file without creating an intermediate runtime
     /// This avoids creating a wasteful default KV cache (32 layers) that would be discarded.
     pub fn load_from_gguf(path: &str) -> HipResult<Self> {
+        Self::load_from_gguf_with_config(path, None)
+    }
+
+    /// Load model directly from GGUF file with optional custom config override
+    pub fn load_from_gguf_with_config(path: &str, custom_config: Option<crate::model::config::ModelConfig>) -> HipResult<Self> {
         tracing::debug!("load_from_gguf: Loading GGUF from path: {}", path);
 
         let loader = crate::loader::gguf::GgufLoader::new(path)
             .map_err(|e| HipError::GenericError(format!("Failed to load GGUF: {}", e)))?;
         tracing::debug!("load_from_gguf: GgufLoader created successfully");
 
-        let config = loader
+        let mut config = loader
             .to_model_config()
             .map_err(|e| HipError::GenericError(format!("Failed to create config: {}", e)))?;
         tracing::debug!("load_from_gguf: Config created - layers={}, heads={}, hidden={}",
                  config.num_hidden_layers, config.num_attention_heads, config.hidden_size);
+
+        // Override config if provided
+        if let Some(custom) = custom_config {
+            config.max_position_embeddings = custom.max_position_embeddings;
+            tracing::debug!("load_from_gguf: Overriding context size to {}", config.max_position_embeddings);
+        }
 
         // Create backend
         let backend = HipBackend::new()?;
@@ -2644,6 +2655,24 @@ impl ModelRuntime {
             ));
         }
         self.kv_cache.reset();
+        Ok(())
+    }
+
+    /// Recreate KV cache with new parameters (useful for overriding config)
+    pub fn recreate_kv_cache(&mut self, max_seq_len: usize) -> HipResult<()> {
+        let config = self.execution_plan.as_ref()
+            .ok_or_else(|| HipError::GenericError("No execution plan".to_string()))?
+            .config();
+
+        self.kv_cache = crate::model::kv_cache::KVCache::new(
+            &self.backend,
+            config.num_hidden_layers,
+            config.num_attention_heads,
+            config.head_dim,
+            max_seq_len,
+        )
+        .map_err(|e| HipError::GenericError(format!("KV cache recreation failed: {}", e)))?;
+
         Ok(())
     }
 }

@@ -14,9 +14,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let metadata = rocmforge::loader::gguf::GgufLoader::metadata_from_file(model_path)?;
     println!("✅ Metadata loaded: {} layers, {} heads, {} hidden size, {} context", metadata.num_layers, metadata.num_heads, metadata.hidden_size, metadata.max_position_embeddings);
 
-    // Use a smaller context size to fit in GPU memory
+    // Override context size to fit in GPU memory
     use rocmforge::model::config::{ModelConfig, ModelType};
-    let config = ModelConfig {
+    let mut config = ModelConfig {
         num_hidden_layers: metadata.num_layers,
         num_attention_heads: metadata.num_heads,
         num_kv_heads: metadata.num_kv_heads,
@@ -30,14 +30,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         head_dim: metadata.head_dim,
     };
 
-    // Create runtime with custom config
-    println!("⏳ Creating model runtime with {} context size...", config.max_position_embeddings);
-    let mut runtime = ModelRuntime::new_with_config(config)?;
-    println!("✅ Runtime created successfully!");
-
-    // Load model with smaller context
-    println!("⏳ Loading model weights...");
-    runtime = runtime.load_model(model_path)?;
+    // Load model directly with overridden config
+    println!("⏳ Loading model with {} context size...", config.max_position_embeddings);
+    let mut runtime = ModelRuntime::load_from_gguf_with_config(model_path, Some(config))?;
     println!("✅ Model loaded successfully!");
 
     // Get backend info
