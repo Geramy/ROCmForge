@@ -8,9 +8,9 @@
 
 use rocmforge::backend::gpu_test_common::GPU_FIXTURE;
 use rocmforge::backend::{DeviceTensor, HipBackend, HipError};
-use serial_test::serial;
 use rocmforge::loader::TensorShape;
 use rocmforge::model::{config::ModelConfig, execution_plan::ExecutionPlan, kv_cache::KVCache};
+use serial_test::serial;
 
 /// Test basic model configuration creation
 #[test]
@@ -35,7 +35,8 @@ fn test_model_config_creation() -> Result<(), HipError> {
 #[test]
 #[serial]
 fn test_backend_creation() -> Result<(), HipError> {
-    let fixture = GPU_FIXTURE.as_ref()
+    let fixture = rocmforge::GPU_FIXTURE
+        .as_ref()
         .expect("GPU not available - test skipped");
     let backend = fixture.backend();
 
@@ -54,12 +55,14 @@ fn test_backend_creation() -> Result<(), HipError> {
 #[test]
 #[serial]
 fn test_kv_cache_creation() -> Result<(), HipError> {
-    let fixture = GPU_FIXTURE.as_ref()
+    let fixture = rocmforge::GPU_FIXTURE
+        .as_ref()
         .expect("GPU not available - test skipped");
     let backend = fixture.backend();
     let config = ModelConfig::llama2_7b();
 
-    let kv_cache = KVCache::new(backend,
+    let kv_cache = KVCache::new(
+        backend,
         config.num_attention_heads,
         config.hidden_size / config.num_attention_heads,
         config.num_hidden_layers,
@@ -76,7 +79,8 @@ fn test_kv_cache_creation() -> Result<(), HipError> {
 #[test]
 #[serial]
 fn test_execution_plan_creation() -> Result<(), HipError> {
-    let fixture = GPU_FIXTURE.as_ref()
+    let fixture = rocmforge::GPU_FIXTURE
+        .as_ref()
         .expect("GPU not available - test skipped");
     let backend = fixture.backend();
     let config = ModelConfig::llama2_7b();
@@ -97,7 +101,8 @@ fn test_execution_plan_creation() -> Result<(), HipError> {
 #[test]
 #[serial]
 fn test_scratch_buffer_creation() -> Result<(), HipError> {
-    let fixture = GPU_FIXTURE.as_ref()
+    let fixture = rocmforge::GPU_FIXTURE
+        .as_ref()
         .expect("GPU not available - test skipped");
     let backend = fixture.backend();
     let config = ModelConfig::llama2_7b();
@@ -114,7 +119,8 @@ fn test_scratch_buffer_creation() -> Result<(), HipError> {
 #[test]
 #[serial]
 fn test_tensor_operations() -> Result<(), HipError> {
-    let fixture = GPU_FIXTURE.as_ref()
+    let fixture = rocmforge::GPU_FIXTURE
+        .as_ref()
         .expect("GPU not available - test skipped");
     let backend = fixture.backend();
 
@@ -122,11 +128,9 @@ fn test_tensor_operations() -> Result<(), HipError> {
     let data_a = vec![1.0f32; 100];
     let data_b = vec![2.0f32; 100];
 
-    let tensor_a =
-        DeviceTensor::from_host_vec(backend, data_a, TensorShape::from_dims(&[10, 10]))?;
+    let tensor_a = DeviceTensor::from_host_vec(backend, data_a, TensorShape::from_dims(&[10, 10]))?;
 
-    let tensor_b =
-        DeviceTensor::from_host_vec(backend, data_b, TensorShape::from_dims(&[10, 10]))?;
+    let tensor_b = DeviceTensor::from_host_vec(backend, data_b, TensorShape::from_dims(&[10, 10]))?;
 
     // Verify tensor shapes
     assert_eq!(tensor_a.shape().dims(), &[10, 10]);
@@ -152,14 +156,16 @@ fn test_tensor_operations() -> Result<(), HipError> {
 #[test]
 #[serial]
 fn test_multilayer_pipeline_structure() -> Result<(), HipError> {
-    let fixture = GPU_FIXTURE.as_ref()
+    let fixture = rocmforge::GPU_FIXTURE
+        .as_ref()
         .expect("GPU not available - test skipped");
     let backend = fixture.backend();
     let config = ModelConfig::llama2_7b();
 
     // Create components
     let execution_plan = ExecutionPlan::new(&backend, &config)?;
-    let kv_cache = KVCache::new(backend,
+    let kv_cache = KVCache::new(
+        backend,
         config.num_attention_heads,
         config.hidden_size / config.num_attention_heads,
         config.num_hidden_layers,

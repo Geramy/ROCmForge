@@ -2,7 +2,9 @@
 //!
 //! Test suite for GLM model loading and inference functionality.
 
+use serial_test::serial;
 use std::fs;
+use std::io::Write;
 use std::path::Path;
 
 use rocmforge::backend::gpu_test_common::GPU_FIXTURE;
@@ -154,9 +156,10 @@ mod tests {
         create_synthetic_glm_model(&model_path)?;
 
         // Load model
-        let fixture = GPU_FIXTURE.as_ref()
-        .expect("GPU not available - test skipped");
-    let backend = fixture.backend();
+        let fixture = rocmforge::GPU_FIXTURE
+            .as_ref()
+            .expect("GPU not available - test skipped");
+        let backend = fixture.backend();
         let loader = GgufLoader::new(&model_path.to_string_lossy())?;
         let config = loader.to_model_config()?;
         let execution_plan = ExecutionPlan::from_gguf(&backend, &loader)?;
@@ -195,9 +198,10 @@ mod tests {
         create_synthetic_glm_model(&model_path)?;
 
         // Load model
-        let fixture = GPU_FIXTURE.as_ref()
-        .expect("GPU not available - test skipped");
-    let backend = fixture.backend();
+        let fixture = rocmforge::GPU_FIXTURE
+            .as_ref()
+            .expect("GPU not available - test skipped");
+        let backend = fixture.backend();
         let loader = GgufLoader::new(&model_path.to_string_lossy())?;
         let config = loader.to_model_config()?;
         let execution_plan = ExecutionPlan::from_gguf(&backend, &loader)?;
@@ -238,9 +242,10 @@ mod tests {
         create_synthetic_glm_model(&model_path)?;
 
         // Load model
-        let fixture = GPU_FIXTURE.as_ref()
-        .expect("GPU not available - test skipped");
-    let backend = fixture.backend();
+        let fixture = rocmforge::GPU_FIXTURE
+            .as_ref()
+            .expect("GPU not available - test skipped");
+        let backend = fixture.backend();
         let loader = GgufLoader::new(&model_path.to_string_lossy())?;
         let execution_plan = ExecutionPlan::from_gguf(&backend, &loader)?;
 
@@ -273,9 +278,10 @@ mod tests {
         create_synthetic_glm_model(&model_path)?;
 
         // Load model
-        let fixture = GPU_FIXTURE.as_ref()
-        .expect("GPU not available - test skipped");
-    let backend = fixture.backend();
+        let fixture = rocmforge::GPU_FIXTURE
+            .as_ref()
+            .expect("GPU not available - test skipped");
+        let backend = fixture.backend();
         let loader = GgufLoader::new(&model_path.to_string_lossy())?;
         let config = loader.to_model_config()?;
 
@@ -299,9 +305,10 @@ mod tests {
         create_synthetic_glm_model(&model_path)?;
 
         // Load model
-        let fixture = GPU_FIXTURE.as_ref()
-        .expect("GPU not available - test skipped");
-    let backend = fixture.backend();
+        let fixture = rocmforge::GPU_FIXTURE
+            .as_ref()
+            .expect("GPU not available - test skipped");
+        let backend = fixture.backend();
         let loader = GgufLoader::new(&model_path.to_string_lossy())?;
         let execution_plan = ExecutionPlan::from_gguf(&backend, &loader)?;
 
@@ -328,9 +335,10 @@ mod tests {
         create_synthetic_glm_model(&model_path)?;
 
         // Load model
-        let fixture = GPU_FIXTURE.as_ref()
-        .expect("GPU not available - test skipped");
-    let backend = fixture.backend();
+        let fixture = rocmforge::GPU_FIXTURE
+            .as_ref()
+            .expect("GPU not available - test skipped");
+        let backend = fixture.backend();
         let loader = GgufLoader::new(&model_path.to_string_lossy())?;
         let config = loader.to_model_config()?;
         let execution_plan = ExecutionPlan::from_gguf(&backend, &loader)?;

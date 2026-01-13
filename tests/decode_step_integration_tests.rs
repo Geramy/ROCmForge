@@ -148,6 +148,7 @@ fn create_minimal_gguf_file(path: &Path, config: &ModelConfig) -> anyhow::Result
 
     Ok(())
 }
+use serial_test::serial;
 
 #[cfg(test)]
 mod tests {
@@ -197,9 +198,9 @@ mod tests {
         // Create scratch buffer manager (unused in this test but created for consistency)
         let _scratch = ScratchBufferManager::new(&backend,
             config.num_attention_heads,
-            config.max_position_embeddings,
+            config.hidden_size, // ← PHASE 24 FIX: 3rd param
             config.head_dim,
-            config.hidden_size,
+            config.max_position_embeddings, // ← PHASE 24 FIX: 5th param
         )
         .unwrap();
 
@@ -293,9 +294,9 @@ mod tests {
 
         let _scratch_gpu = ScratchBufferManager::new(&backend,
             config.num_attention_heads,
-            config.max_position_embeddings,
+            config.hidden_size, // ← PHASE 24 FIX: 3rd param
             config.head_dim,
-            config.hidden_size,
+            config.max_position_embeddings, // ← PHASE 24 FIX: 5th param
         )
         .unwrap();
 
@@ -377,9 +378,9 @@ mod tests {
         // Create scratch buffer
         let _scratch = ScratchBufferManager::new(&backend,
             config.num_attention_heads,
-            config.max_position_embeddings,
+            config.hidden_size, // ← PHASE 24 FIX: 3rd param
             config.head_dim,
-            config.hidden_size,
+            config.max_position_embeddings, // ← PHASE 24 FIX: 5th param
         )
         .unwrap();
 

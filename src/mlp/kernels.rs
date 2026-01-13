@@ -65,8 +65,8 @@ use std::sync::Mutex;
 use crate::backend::hip_backend::{HipBackend, HipError, HipKernel, HipModule};
 
 // RDNA3 (wave32) tuning constants for AMD Radeon RX 7900 XT
-const BLOCK_SIZE: u32 = 256;  // 8 waves of 32 threads
-const WARP_SIZE: u32 = 32;     // RDNA3 wavefront size
+const BLOCK_SIZE: u32 = 256; // 8 waves of 32 threads
+const WARP_SIZE: u32 = 32; // RDNA3 wavefront size
 
 /// Cached kernel modules and functions for MLP operations
 ///
@@ -91,7 +91,8 @@ static GLOBAL_CACHE: Mutex<Option<KernelCache>> = Mutex::new(None);
 fn get_or_init_cache() -> Result<&'static Mutex<Option<KernelCache>>, HipError> {
     // First check if already initialized
     {
-        let cache = GLOBAL_CACHE.lock()
+        let cache = GLOBAL_CACHE
+            .lock()
             .map_err(|e| HipError::LockPoisoned(format!("GLOBAL_CACHE lock poisoned: {}", e)))?;
         if cache.is_some() {
             return Ok(&GLOBAL_CACHE);
@@ -99,7 +100,8 @@ fn get_or_init_cache() -> Result<&'static Mutex<Option<KernelCache>>, HipError> 
     }
 
     // Need to initialize - drop the read lock first
-    let mut cache = GLOBAL_CACHE.lock()
+    let mut cache = GLOBAL_CACHE
+        .lock()
         .map_err(|e| HipError::LockPoisoned(format!("GLOBAL_CACHE lock poisoned: {}", e)))?;
 
     // Double-check in case another thread initialized while we waited
@@ -110,14 +112,18 @@ fn get_or_init_cache() -> Result<&'static Mutex<Option<KernelCache>>, HipError> 
     // Load SwiGLU kernel module and function
     // Note: We use a temporary backend just for loading. The actual kernel
     // launch will use the caller's backend to ensure stream consistency.
-    let load_backend = HipBackend::new()
-        .map_err(|e| HipError::InitializationFailed(format!("Failed to create HipBackend for loading: {}", e)))?;
+    let load_backend = HipBackend::new().map_err(|e| {
+        HipError::InitializationFailed(format!("Failed to create HipBackend for loading: {}", e))
+    })?;
 
     let swiglu_path = std::env::var("SWIGLU_HSACO")
         .map_err(|_| HipError::KernelLoadFailed("SWIGLU_HSACO env var not set".to_string()))?;
 
     if !Path::new(&swiglu_path).exists() {
-        return Err(HipError::KernelLoadFailed(format!("HSACO not found: {}", swiglu_path)));
+        return Err(HipError::KernelLoadFailed(format!(
+            "HSACO not found: {}",
+            swiglu_path
+        )));
     }
 
     let swiglu_module = load_backend.load_module(&swiglu_path)?;
@@ -128,7 +134,10 @@ fn get_or_init_cache() -> Result<&'static Mutex<Option<KernelCache>>, HipError> 
         .map_err(|_| HipError::KernelLoadFailed("RMS_NORM_HSACO env var not set".to_string()))?;
 
     if !Path::new(&rms_norm_path).exists() {
-        return Err(HipError::KernelLoadFailed(format!("HSACO not found: {}", rms_norm_path)));
+        return Err(HipError::KernelLoadFailed(format!(
+            "HSACO not found: {}",
+            rms_norm_path
+        )));
     }
 
     let rms_norm_module = load_backend.load_module(&rms_norm_path)?;
@@ -167,35 +176,66 @@ fn get_or_init_cache() -> Result<&'static Mutex<Option<KernelCache>>, HipError> 
 /// to ensure the kernel completes before using the output.
 #[cfg(feature = "rocm")]
 pub unsafe fn swiglu_gpu_kernel(
-    _backend: &HipBackend,
+    backend: &HipBackend,
     gate: *const f32,
     up: *const f32,
     output: *mut f32,
     seq_len: u32,
     intermediate_size: u32,
 ) -> Result<(), String> {
-    // For ROCm build without actual kernel files, implement CPU fallback
-    // This allows the ROCm feature to build and run for testing purposes
+    match get_or_init_cache() {
+        Ok(cache_ref) => {
+            let cache = cache_ref
+                .lock()
+                .map_err(|e| format!("SwiGLU cache lock poisoned: {}", e))?;
+            let cache_ref = cache
+                .as_ref()
+                .ok_or_else(|| "SwiGLU cache not initialized".to_string())?;
 
-    let total_elements = (seq_len * intermediate_size) as usize;
+            let kernel = cache_ref
+                .swiglu_kernel
+                .as_ref()
+                .ok_or_else(|| "swiglu_kernel not loaded".to_string())?;
 
-    // Create slices from raw pointers for safe access
-    let gate_slice = std::slice::from_raw_parts(gate, total_elements);
-    let up_slice = std::slice::from_raw_parts(up, total_elements);
-    let output_slice = std::slice::from_raw_parts_mut(output, total_elements);
+            // Calculate grid/block dimensions
+            let total_elements = (seq_len * intermediate_size) as usize;
+            let block_dim = (256, 1, 1);
+            let grid_dim = (
+                ((total_elements as u32) + block_dim.0 - 1) / block_dim.0,
+                1,
+                1,
+            );
+            let shared_mem_bytes = 0;
 
-    // Apply SwiGLU activation: gate * swish(up) where swish(x) = x * sigmoid(x)
-    for i in 0..total_elements {
-        let gate_val = gate_slice[i];
-        let up_val = up_slice[i];
-        // Swish activation: swish(x) = x * sigmoid(x)
-        let sigmoid_up = 1.0 / (1.0 + (-up_val).exp());
-        let swish_up = up_val * sigmoid_up;
-        // SwiGLU: gate(x) * swish(up(x))
-        output_slice[i] = gate_val * swish_up;
+            // Prepare kernel arguments - ALL args must be copied to mut locals first
+            let mut gate_arg = gate as *mut f32;
+            let mut up_arg = up as *mut f32;
+            let mut output_arg = output;
+            let mut seq_len_arg = seq_len;
+            let mut intermediate_size_arg = intermediate_size;
+
+            let args: &[*mut c_void] = &[
+                &mut gate_arg as *mut _ as *mut c_void,
+                &mut up_arg as *mut _ as *mut c_void,
+                &mut output_arg as *mut _ as *mut c_void,
+                &mut seq_len_arg as *mut _ as *mut c_void,
+                &mut intermediate_size_arg as *mut _ as *mut c_void,
+            ];
+
+            backend
+                .launch_kernel_with_module_shared(
+                    kernel,
+                    grid_dim,
+                    block_dim,
+                    args,
+                    shared_mem_bytes,
+                )
+                .map_err(|e| format!("Failed to launch swiglu kernel: {:?}", e))?;
+
+            Ok(())
+        }
+        Err(e) => Err(format!("Failed to get cache: {:?}", e)),
     }
-
-    Ok(())
 }
 
 /// Launch RMSNorm kernel
@@ -221,7 +261,7 @@ pub unsafe fn swiglu_gpu_kernel(
 /// to ensure the kernel completes before using the output.
 #[cfg(feature = "rocm")]
 pub unsafe fn rms_norm_gpu_kernel(
-    _backend: &HipBackend,
+    backend: &HipBackend,
     input: *const f32,
     weight: *const f32,
     output: *mut f32,
@@ -229,33 +269,58 @@ pub unsafe fn rms_norm_gpu_kernel(
     hidden_size: u32,
     eps: f32,
 ) -> Result<(), String> {
-    // For ROCm build without actual kernel files, implement CPU fallback
-    // This allows the ROCm feature to build and run for testing purposes
+    match get_or_init_cache() {
+        Ok(cache_ref) => {
+            let cache = cache_ref
+                .lock()
+                .map_err(|e| format!("RMSNorm cache lock poisoned: {}", e))?;
+            let cache_ref = cache
+                .as_ref()
+                .ok_or_else(|| "RMSNorm cache not initialized".to_string())?;
 
-    let seq_len_usize = seq_len as usize;
-    let hidden_size_usize = hidden_size as usize;
+            let kernel = cache_ref
+                .rms_norm_kernel
+                .as_ref()
+                .ok_or_else(|| "rms_norm_kernel not loaded".to_string())?;
 
-    // Create slices from raw pointers for safe access
-    let input_slice = std::slice::from_raw_parts(input, seq_len_usize * hidden_size_usize);
-    let weight_slice = std::slice::from_raw_parts(weight, hidden_size_usize);
-    let output_slice = std::slice::from_raw_parts_mut(output, seq_len_usize * hidden_size_usize);
+            // Calculate grid/block dimensions
+            let block_dim = (256, 1, 1);
+            let grid_dim = (
+                ((hidden_size + block_dim.0 - 1) / block_dim.0, seq_len, 1),
+                1,
+                1,
+            );
+            let shared_mem_bytes = 0;
 
-    // Process each row independently
-    for row_idx in 0..seq_len_usize {
-        let start_idx = row_idx * hidden_size_usize;
-        let end_idx = start_idx + hidden_size_usize;
-        let row = &input_slice[start_idx..end_idx];
+            // Prepare kernel arguments
+            let mut input_arg = input as *mut f32;
+            let mut weight_arg = weight as *mut f32;
+            let mut output_arg = output;
+            let mut seq_len_arg = seq_len;
+            let mut hidden_size_arg = hidden_size;
+            let mut eps_arg = eps;
 
-        // Compute RMS: sqrt(mean(x^2) + eps)
-        let sum_squares: f32 = row.iter().map(|x| x * x).sum();
-        let mean_square = sum_squares / hidden_size_usize as f32;
-        let rms = (mean_square + eps).sqrt();
+            let args: &[*mut c_void] = &[
+                &mut input_arg as *mut _ as *mut c_void,
+                &mut weight_arg as *mut _ as *mut c_void,
+                &mut output_arg as *mut _ as *mut c_void,
+                &mut seq_len_arg as *mut _ as *mut c_void,
+                &mut hidden_size_arg as *mut _ as *mut c_void,
+                &mut eps_arg as *mut _ as *mut c_void,
+            ];
 
-        // Apply RMSNorm: (x / rms) * weight
-        for (j, &x) in row.iter().enumerate() {
-            output_slice[start_idx + j] = (x / rms) * weight_slice[j];
+            backend
+                .launch_kernel_with_module_shared(
+                    kernel,
+                    grid_dim,
+                    block_dim,
+                    args,
+                    shared_mem_bytes,
+                )
+                .map_err(|e| format!("Failed to launch rms_norm kernel: {:?}", e))?;
+
+            Ok(())
         }
+        Err(e) => Err(format!("Failed to get cache: {:?}", e)),
     }
-
-    Ok(())
 }

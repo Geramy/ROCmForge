@@ -1,3 +1,11 @@
+//! Edge Case Tests for ROCmForge
+//!
+//! This module contains tests for edge cases and boundary conditions
+//! that may not be covered by the main test suite.
+//!
+//! Following TDD principles, these tests document expected behavior
+//! for edge cases even if some may currently fail.
+
 use rocmforge::backend::gpu_test_common::GPU_FIXTURE;
 use serial_test::serial;
 use rocmforge::kv_cache::{CacheConfig, KvCache, KvCacheError};
@@ -21,7 +29,10 @@ fn test_kv_cache_empty_initial_state() {
     // Cache should be empty initially
     let stats = cache.get_cache_stats();
     assert_eq!(stats.total_pages, 0, "Cache should start with no pages");
-    assert_eq!(stats.active_sequences, 0, "Cache should start with no active sequences");
+    assert_eq!(
+        stats.active_sequences, 0,
+        "Cache should start with no active sequences"
+    );
     assert_eq!(stats.total_tokens, 0, "Cache should start with no tokens");
 }
 
@@ -42,7 +53,10 @@ fn test_kv_cache_single_token() {
     assert_eq!(page_id.unwrap(), 0, "First page should have ID 0");
 
     let stats = cache.get_cache_stats();
-    assert_eq!(stats.total_pages, 1, "Should have 1 page after single allocation");
+    assert_eq!(
+        stats.total_pages, 1,
+        "Should have 1 page after single allocation"
+    );
     assert_eq!(stats.active_sequences, 1, "Should have 1 active sequence");
 }
 
@@ -62,12 +76,23 @@ fn test_kv_cache_eviction_at_capacity() {
     // Fill cache to capacity
     for seq_id in 1..=max_pages {
         let page_id = cache.allocate_page(seq_id as u32);
-        assert!(page_id.is_ok(), "Should allocate page for sequence {}", seq_id);
+        assert!(
+            page_id.is_ok(),
+            "Should allocate page for sequence {}",
+            seq_id
+        );
     }
 
     let stats = cache.get_cache_stats();
-    assert_eq!(stats.total_pages, max_pages as usize, "Cache should be at capacity");
-    assert_eq!(stats.active_sequences, max_pages, "Should have {} active sequences", max_pages);
+    assert_eq!(
+        stats.total_pages, max_pages as usize,
+        "Cache should be at capacity"
+    );
+    assert_eq!(
+        stats.active_sequences, max_pages,
+        "Should have {} active sequences",
+        max_pages
+    );
 
     // Try to allocate one more page - should fail with clear error
     let result = cache.allocate_page((max_pages + 1) as u32);
@@ -103,7 +128,10 @@ fn test_kv_cache_cross_sequence_isolation() {
     let page3 = cache.allocate_page(1).unwrap(); // Another page for sequence 1
 
     // Verify page IDs are unique
-    assert_ne!(page1, page2, "Different sequences should get different pages");
+    assert_ne!(
+        page1, page2,
+        "Different sequences should get different pages"
+    );
     assert_ne!(page2, page3, "Each allocation should get unique page ID");
 
     let stats = cache.get_cache_stats();
@@ -134,7 +162,10 @@ fn test_kv_cache_sequence_reuse() {
 
     let stats = cache.get_cache_stats();
     assert_eq!(stats.total_pages, 3, "Should have 3 pages");
-    assert_eq!(stats.active_sequences, 1, "Should still have 1 active sequence");
+    assert_eq!(
+        stats.active_sequences, 1,
+        "Should still have 1 active sequence"
+    );
 }
 
 // ============================================================================
@@ -247,7 +278,10 @@ fn test_cache_config_minimum_valid_values() {
     // Test edge case: All minimum valid values (1)
     // This tests the lower boundary of valid configurations
     let config = CacheConfig::new(1, 1, 1, 1, 1);
-    assert!(config.is_ok(), "Minimum valid configuration should be accepted");
+    assert!(
+        config.is_ok(),
+        "Minimum valid configuration should be accepted"
+    );
 
     let config = config.unwrap();
     assert_eq!(config.page_size, 1);

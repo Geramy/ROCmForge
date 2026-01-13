@@ -61,7 +61,7 @@ impl KVCache {
         head_dim: usize,
         max_seq_len: usize,
     ) -> KVCacheResult<Self> {
-        tracing::debug!("KVCache::new() called with layers={}, heads={}, head_dim={}, max_seq_len={}",
+        eprintln!("KVCache::new() called with layers={}, heads={}, head_dim={}, max_seq_len={}",
                  num_layers, num_heads, head_dim, max_seq_len);
 
         // Calculate sizes for sub-allocation
@@ -70,7 +70,7 @@ impl KVCache {
         let total_keys_bytes = bytes_per_layer * num_layers;
         let total_values_bytes = bytes_per_layer * num_layers;
 
-        tracing::debug!("KVCache::new() allocating {} bytes for keys, {} bytes for values",
+        eprintln!("KVCache::new() allocating {} bytes for keys, {} bytes for values",
                  total_keys_bytes, total_values_bytes);
 
         // Allocate single large buffers for all keys and values
@@ -82,7 +82,7 @@ impl KVCache {
 
         let current_seq_len = vec![0; num_layers];
 
-        tracing::debug!("KVCache::new() completed allocation, returning KVCache");
+        eprintln!("KVCache::new() completed allocation, returning KVCache");
         Ok(KVCache {
             backend: backend.clone(),
             num_layers,
@@ -272,6 +272,25 @@ impl KVCache {
         for len in &mut self.current_seq_len {
             *len = 0;
         }
+    }
+
+    /// Advance current sequence length without copying new tensors.
+    pub fn advance(&mut self, layer: usize, tokens: usize) -> KVCacheResult<()> {
+        if layer >= self.num_layers {
+            return Err(KVCacheError::InvalidLayer {
+                layer,
+                max_layers: self.num_layers,
+            });
+        }
+        let current = self.current_seq_len[layer];
+        if current + tokens > self.max_seq_len {
+            return Err(KVCacheError::CapacityExceeded {
+                seq_len: current + tokens,
+                max_seq_len: self.max_seq_len,
+            });
+        }
+        self.current_seq_len[layer] += tokens;
+        Ok(())
     }
 
     /// Get total memory usage in bytes

@@ -4,10 +4,11 @@
 //! These tests verify that ExecutionPlan can be constructed from GGUF files
 //! using the helper functions for weight mapping.
 
-use rocmforge::backend::gpu_test_common::GPU_FIXTURE;
-use serial_test::serial;
+use rocmforge::backend::{DeviceTensor, HipBackend};
 use rocmforge::loader::gguf::GgufLoader;
-use rocmforge::model::{ExecutionPlan, LayerPlan};
+use rocmforge::model::{ExecutionPlan, LayerPlan, ModelConfig};
+use serial_test::serial;
+use std::collections::HashMap;
 
 /// Test execution plan construction from GGUF
 #[test]
@@ -18,7 +19,8 @@ fn test_execution_plan_construction() {
     let gguf_loader = GgufLoader::new(gguf_path).expect("Failed to load GGUF");
 
     // Create backend (this will be used for GPU tensor creation)
-    let fixture = GPU_FIXTURE.as_ref()
+    let fixture = rocmforge::GPU_FIXTURE
+        .as_ref()
         .expect("GPU not available - test skipped");
     let backend = fixture.backend();
 
@@ -35,8 +37,8 @@ fn test_execution_plan_construction() {
     );
 
     println!("✅ Execution plan construction test passed");
-        // Check for memory leaks
-        fixture.assert_no_leak(5);
+    // Check for memory leaks
+    fixture.assert_no_leak(5);
 }
 
 /// Test layer weight shapes
@@ -45,7 +47,8 @@ fn test_execution_plan_construction() {
 fn test_layer_weight_shapes() {
     let gguf_path = "tests/data/tiny_model.gguf";
     let gguf_loader = GgufLoader::new(gguf_path).expect("Failed to load GGUF");
-    let fixture = GPU_FIXTURE.as_ref()
+    let fixture = rocmforge::GPU_FIXTURE
+        .as_ref()
         .expect("GPU not available - test skipped");
     let backend = fixture.backend();
 
@@ -122,7 +125,8 @@ fn test_layer_weight_shapes() {
 fn test_all_required_tensors_present() {
     let gguf_path = "tests/data/tiny_model.gguf";
     let gguf_loader = GgufLoader::new(gguf_path).expect("Failed to load GGUF");
-    let fixture = GPU_FIXTURE.as_ref()
+    let fixture = rocmforge::GPU_FIXTURE
+        .as_ref()
         .expect("GPU not available - test skipped");
     let backend = fixture.backend();
 

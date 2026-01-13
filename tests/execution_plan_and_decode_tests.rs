@@ -12,6 +12,8 @@ use rocmforge::model::{
     config::{ModelConfig, ModelType},
     kv_cache::KVCache,
 };
+use serial_test::serial;
+use std::sync::Arc;
 
 // REMOVED: Duplicate test_execution_plan_construction
 // This test is already in execution_plan_construction_tests.rs:14
@@ -78,12 +80,14 @@ fn test_fused_qkv_correctness() {
     let backend = fixture.backend();
 
     // Create device tensors
-    let x_tensor = DeviceTensor::from_host_vec(backend,
+    let x_tensor = DeviceTensor::from_host_vec(
+        backend,
         x_data,
         TensorShape::from_dims(&[seq_len, hidden_size]),
     )
     .expect("Failed to create X tensor");
-    let w_qkv_tensor = DeviceTensor::from_host_vec(backend,
+    let w_qkv_tensor = DeviceTensor::from_host_vec(
+        backend,
         w_qkv_data,
         TensorShape::from_dims(&[3 * hidden_size, hidden_size]),
     )
@@ -132,8 +136,8 @@ fn test_fused_qkv_correctness() {
             gpu_v[i]
         );
     }
-        // Check for memory leaks
-        fixture.assert_no_leak(5);
+    // Check for memory leaks
+    fixture.assert_no_leak(5);
 }
 
 /// Test (C): Attention correctness (CPU fallback reference)
@@ -171,7 +175,8 @@ fn test_attention_correctness() {
     let mut scratch = backend
         .create_scratch_buffers(&config)
         .expect("Failed to create scratch buffers");
-    let mut kv_cache = KVCache::new(backend,
+    let mut kv_cache = KVCache::new(
+        backend,
         config.num_hidden_layers,
         config.num_attention_heads,
         config.head_dim,
@@ -184,17 +189,20 @@ fn test_attention_correctness() {
     let k_data = vec![2.0; seq_len * num_heads * head_dim];
     let v_data = vec![3.0; seq_len * num_heads * head_dim];
 
-    let q_tensor = DeviceTensor::from_host_vec(backend,
+    let q_tensor = DeviceTensor::from_host_vec(
+        backend,
         q_data.clone(),
         TensorShape::from_dims(&[seq_len, num_heads, head_dim]),
     )
     .expect("Failed to create Q tensor");
-    let k_tensor = DeviceTensor::from_host_vec(backend,
+    let k_tensor = DeviceTensor::from_host_vec(
+        backend,
         k_data.clone(),
         TensorShape::from_dims(&[seq_len, num_heads, head_dim]),
     )
     .expect("Failed to create K tensor");
-    let v_tensor = DeviceTensor::from_host_vec(backend,
+    let v_tensor = DeviceTensor::from_host_vec(
+        backend,
         v_data.clone(),
         TensorShape::from_dims(&[seq_len, num_heads, head_dim]),
     )
@@ -236,8 +244,8 @@ fn test_attention_correctness() {
             gpu_output_host[i]
         );
     }
-        // Check for memory leaks
-        fixture.assert_no_leak(5);
+    // Check for memory leaks
+    fixture.assert_no_leak(5);
 }
 
 /// Test (D): KV cache update + retrieval
@@ -275,7 +283,8 @@ fn test_kv_cache_update_and_retrieval() {
 
     // Initial token embedding (token 0)
     let token_embedding = vec![1.0f32; hidden_size];
-    let embedding_tensor = DeviceTensor::from_host_vec(backend,
+    let embedding_tensor = DeviceTensor::from_host_vec(
+        backend,
         token_embedding,
         TensorShape::from_dims(&[hidden_size]),
     )
@@ -295,7 +304,8 @@ fn test_kv_cache_update_and_retrieval() {
 
     // Second token embedding (token 1)
     let token_embedding2 = vec![2.0f32; hidden_size];
-    let embedding_tensor2 = DeviceTensor::from_host_vec(backend,
+    let embedding_tensor2 = DeviceTensor::from_host_vec(
+        backend,
         token_embedding2,
         TensorShape::from_dims(&[hidden_size]),
     )
@@ -325,8 +335,8 @@ fn test_kv_cache_update_and_retrieval() {
         }
     }
     assert!(different, "Logits should be different between steps");
-        // Check for memory leaks
-        fixture.assert_no_leak(5);
+    // Check for memory leaks
+    fixture.assert_no_leak(5);
 }
 
 /// Test (E): Full decode_step() with micro-model
@@ -367,7 +377,8 @@ fn test_full_decode_step_micro_model() {
 
     // Input token embedding
     let token_embedding = vec![0.5f32; hidden_size];
-    let embedding_tensor = DeviceTensor::from_host_vec(backend,
+    let embedding_tensor = DeviceTensor::from_host_vec(
+        backend,
         token_embedding.clone(),
         TensorShape::from_dims(&[hidden_size]),
     )
@@ -406,8 +417,8 @@ fn test_full_decode_step_micro_model() {
             gpu_logits_host[i]
         );
     }
-        // Check for memory leaks
-        fixture.assert_no_leak(5);
+    // Check for memory leaks
+    fixture.assert_no_leak(5);
 }
 
 // Helper functions for CPU reference computations

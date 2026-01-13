@@ -1,9 +1,8 @@
 //! Comprehensive TDD tests for KV cache module
 
-use serial_test::serial;
-use rocmforge::backend::gpu_test_common::GPU_FIXTURE;
 use rocmforge::backend::HipBackend;
 use rocmforge::kv_cache::{CacheConfig, CachePage, KvCache, KvCacheError, SequenceCache};
+use serial_test::serial;
 use std::collections::HashMap;
 
 #[test]
@@ -40,7 +39,8 @@ fn test_cache_config_validation() {
 #[test]
 #[serial]
 fn test_kv_cache_initialization() {
-    let fixture = GPU_FIXTURE.as_ref()
+    let fixture = rocmforge::GPU_FIXTURE
+        .as_ref()
         .expect("GPU not available - test skipped");
     let backend = fixture.backend();
     let config = CacheConfig::new(1024, 100, 32, 128, 24).unwrap();
@@ -61,7 +61,8 @@ fn test_kv_cache_initialization() {
 #[test]
 #[serial]
 fn test_page_allocation() {
-    let fixture = GPU_FIXTURE.as_ref()
+    let fixture = rocmforge::GPU_FIXTURE
+        .as_ref()
         .expect("GPU not available - test skipped");
     let backend = fixture.backend();
     let config = CacheConfig::new(4, 10, 32, 128, 24).unwrap();
@@ -103,7 +104,8 @@ fn test_page_allocation() {
 #[test]
 #[serial]
 fn test_capacity_limit() {
-    let fixture = GPU_FIXTURE.as_ref()
+    let fixture = rocmforge::GPU_FIXTURE
+        .as_ref()
         .expect("GPU not available - test skipped");
     let backend = fixture.backend();
     let config = CacheConfig::new(4, 2, 32, 128, 24).unwrap();
@@ -132,7 +134,8 @@ fn test_capacity_limit() {
 #[test]
 #[serial]
 fn test_token_appending() {
-    let fixture = GPU_FIXTURE.as_ref()
+    let fixture = rocmforge::GPU_FIXTURE
+        .as_ref()
         .expect("GPU not available - test skipped");
     let backend = fixture.backend();
     // Set max_pages=1 and page_size=4
@@ -165,7 +168,8 @@ fn test_token_appending() {
 #[test]
 #[serial]
 fn test_token_appending_with_new_page() {
-    let fixture = GPU_FIXTURE.as_ref()
+    let fixture = rocmforge::GPU_FIXTURE
+        .as_ref()
         .expect("GPU not available - test skipped");
     let backend = fixture.backend();
     let config = CacheConfig::new(2, 10, 32, 128, 24).unwrap();
@@ -191,7 +195,8 @@ fn test_token_appending_with_new_page() {
 #[test]
 #[serial]
 fn test_sequence_retrieval() {
-    let fixture = GPU_FIXTURE.as_ref()
+    let fixture = rocmforge::GPU_FIXTURE
+        .as_ref()
         .expect("GPU not available - test skipped");
     let backend = fixture.backend();
     let config = CacheConfig::new(4, 10, 32, 128, 24).unwrap();
@@ -219,7 +224,8 @@ fn test_sequence_retrieval() {
 #[test]
 #[serial]
 fn test_sequence_removal() {
-    let fixture = GPU_FIXTURE.as_ref()
+    let fixture = rocmforge::GPU_FIXTURE
+        .as_ref()
         .expect("GPU not available - test skipped");
     let backend = fixture.backend();
     let config = CacheConfig::new(4, 10, 32, 128, 24).unwrap();
@@ -250,7 +256,8 @@ fn test_sequence_removal() {
 #[test]
 #[serial]
 fn test_multiple_sequences() {
-    let fixture = GPU_FIXTURE.as_ref()
+    let fixture = rocmforge::GPU_FIXTURE
+        .as_ref()
         .expect("GPU not available - test skipped");
     let backend = fixture.backend();
     let config = CacheConfig::new(4, 20, 32, 128, 24).unwrap();
@@ -291,7 +298,8 @@ fn test_multiple_sequences() {
 #[test]
 #[serial]
 fn test_page_reuse() {
-    let fixture = GPU_FIXTURE.as_ref()
+    let fixture = rocmforge::GPU_FIXTURE
+        .as_ref()
         .expect("GPU not available - test skipped");
     let backend = fixture.backend();
     let config = CacheConfig::new(4, 10, 32, 128, 24).unwrap();
@@ -319,7 +327,8 @@ fn test_page_reuse() {
 #[test]
 #[serial]
 fn test_invalid_operations() {
-    let fixture = GPU_FIXTURE.as_ref()
+    let fixture = rocmforge::GPU_FIXTURE
+        .as_ref()
         .expect("GPU not available - test skipped");
     let backend = fixture.backend();
     let config = CacheConfig::new(4, 10, 32, 128, 24).unwrap();
@@ -498,7 +507,8 @@ fn test_concurrent_access_thread_safety() {
     use std::sync::{Arc, Mutex};
     use std::thread;
 
-    let fixture = GPU_FIXTURE.as_ref()
+    let fixture = rocmforge::GPU_FIXTURE
+        .as_ref()
         .expect("GPU not available - test skipped");
     let backend = fixture.backend();
     let config = CacheConfig::new(16, 100, 32, 128, 24).unwrap();
@@ -577,7 +587,8 @@ fn test_concurrent_access_thread_safety() {
 #[test]
 #[serial]
 fn test_sequence_lifetime_tracking() {
-    let fixture = GPU_FIXTURE.as_ref()
+    let fixture = rocmforge::GPU_FIXTURE
+        .as_ref()
         .expect("GPU not available - test skipped");
     let backend = fixture.backend();
     let config = CacheConfig::new(4, 10, 32, 128, 24).unwrap();
@@ -605,7 +616,8 @@ fn test_sequence_lifetime_tracking() {
 #[test]
 #[serial]
 fn test_auto_cleanup_completed_sequences() {
-    let fixture = GPU_FIXTURE.as_ref()
+    let fixture = rocmforge::GPU_FIXTURE
+        .as_ref()
         .expect("GPU not available - test skipped");
     let backend = fixture.backend();
     let config = CacheConfig::new(4, 5, 32, 128, 24).unwrap();
@@ -641,7 +653,8 @@ fn test_auto_cleanup_completed_sequences() {
 #[test]
 #[serial]
 fn test_lru_eviction_when_capacity_exceeded() {
-    let fixture = GPU_FIXTURE.as_ref()
+    let fixture = rocmforge::GPU_FIXTURE
+        .as_ref()
         .expect("GPU not available - test skipped");
     let backend = fixture.backend();
     // Small cache to trigger eviction: page_size=4, max_pages=2
@@ -675,7 +688,8 @@ fn test_lru_eviction_when_capacity_exceeded() {
 #[test]
 #[serial]
 fn test_lru_eviction_with_multiple_pages() {
-    let fixture = GPU_FIXTURE.as_ref()
+    let fixture = rocmforge::GPU_FIXTURE
+        .as_ref()
         .expect("GPU not available - test skipped");
     let backend = fixture.backend();
     // Small cache: page_size=2, max_pages=3
@@ -709,7 +723,8 @@ fn test_lru_eviction_with_multiple_pages() {
 #[test]
 #[serial]
 fn test_sequence_access_time_tracking() {
-    let fixture = GPU_FIXTURE.as_ref()
+    let fixture = rocmforge::GPU_FIXTURE
+        .as_ref()
         .expect("GPU not available - test skipped");
     let backend = fixture.backend();
     let config = CacheConfig::new(4, 10, 32, 128, 24).unwrap();
@@ -736,7 +751,8 @@ fn test_sequence_access_time_tracking() {
 #[test]
 #[serial]
 fn test_cleanup_preserves_active_sequences() {
-    let fixture = GPU_FIXTURE.as_ref()
+    let fixture = rocmforge::GPU_FIXTURE
+        .as_ref()
         .expect("GPU not available - test skipped");
     let backend = fixture.backend();
     let config = CacheConfig::new(4, 10, 32, 128, 24).unwrap();
@@ -772,7 +788,8 @@ fn test_cleanup_preserves_active_sequences() {
 #[test]
 #[serial]
 fn test_get_active_sequences() {
-    let fixture = GPU_FIXTURE.as_ref()
+    let fixture = rocmforge::GPU_FIXTURE
+        .as_ref()
         .expect("GPU not available - test skipped");
     let backend = fixture.backend();
     let config = CacheConfig::new(4, 10, 32, 128, 24).unwrap();
