@@ -1,6 +1,6 @@
 //! End-to-end transformer layer tests
 //! Tests the complete transformer pipeline including LayerNorm, attention, and MLP
-
+use rocmforge::backend::gpu_test_common::GPU_FIXTURE;
 use rocmforge::backend::hip_backend::{DeviceTensor, HipBackend};
 use rocmforge::backend::scratch::ScratchBufferManager;
 use rocmforge::loader::mmap_loader::TensorShape;
@@ -16,12 +16,10 @@ mod tests {
     #[test]
     fn test_layer_norm_integration() {
         // Initialize HIP backend
-        let fixture = rocmforge::GPU_FIXTURE
+        let fixture = GPU_FIXTURE
             .as_ref()
             .expect("GPU not available - test skipped");
         let backend = fixture.backend();
-        assert!(backend.is_ok(), "Failed to initialize HIP backend");
-        let backend = backend.unwrap();
 
         // Create input tensor [batch=2, seq_len=3, hidden_size=128]
         let batch_size = 2;
@@ -110,12 +108,10 @@ mod tests {
     #[test]
     fn test_mlp_swiglu_integration() {
         // Initialize HIP backend
-        let fixture = rocmforge::GPU_FIXTURE
+        let fixture = GPU_FIXTURE
             .as_ref()
             .expect("GPU not available - test skipped");
         let backend = fixture.backend();
-        assert!(backend.is_ok(), "Failed to initialize HIP backend");
-        let backend = backend.unwrap();
 
         // Test dimensions
         let seq_len = 2;
@@ -204,12 +200,10 @@ mod tests {
     #[test]
     fn test_transformer_component_shapes() {
         // Initialize HIP backend
-        let fixture = rocmforge::GPU_FIXTURE
+        let fixture = GPU_FIXTURE
             .as_ref()
             .expect("GPU not available - test skipped");
         let backend = fixture.backend();
-        assert!(backend.is_ok(), "Failed to initialize HIP backend");
-        let backend = backend.unwrap();
 
         // Create model configuration
         let config = ModelConfig {

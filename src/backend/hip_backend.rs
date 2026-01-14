@@ -203,7 +203,7 @@ impl From<crate::model::kv_cache::KVCacheError> for HipError {
 
 impl From<crate::ggml::GgmlError> for HipError {
     fn from(err: crate::ggml::GgmlError) -> Self {
-        HipError::GenericError(err.to_string())
+        HipError::GenericError(format!("{:?}", err))
     }
 }
 

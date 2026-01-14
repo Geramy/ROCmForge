@@ -1,3 +1,4 @@
+use rocmforge::backend::gpu_test_common::GPU_FIXTURE;
 use rocmforge::backend::hip_backend::{DeviceTensor, HipBackend};
 use rocmforge::loader::gguf::GgufLoader;
 use rocmforge::loader::lazy_tensor::LazyTensor;
@@ -8,7 +9,7 @@ use std::sync::Arc;
 
 /// Helper function to create a test backend
 fn create_test_backend() -> Arc<HipBackend> {
-    let fixture = rocmforge::GPU_FIXTURE
+    let fixture = GPU_FIXTURE
         .as_ref()
         .expect("GPU not available - test skipped");
     fixture.backend().clone()

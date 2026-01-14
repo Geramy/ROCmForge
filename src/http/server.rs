@@ -543,8 +543,11 @@ pub async fn run_server(
     })?;
 
     info!("Loading GGUF model from {}", model_path);
-    let mut engine = InferenceEngine::new(EngineConfig::default())?;
-    engine.load_gguf_model(&model_path).await?;
+    // PHASE 24 FIX: Use from_gguf() instead of new(EngineConfig::default()) + load_gguf_model()
+    // This creates the paged KV cache with correct model dimensions instead of wrong defaults
+    // (32 heads, 128 head_dim, 1000 pages) which wastes memory and may cause dimension mismatches.
+    // Matches the fix applied to rocmforge_cli.rs:create_engine()
+    let mut engine = InferenceEngine::from_gguf(&model_path).await?;
     let engine = Arc::new(engine);
     engine.start().await?;
 

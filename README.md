@@ -6,77 +6,61 @@ A high-performance inference engine specifically designed for AMD GPUs using ROC
 
 ## Project Status
 
-**Alpha Software - Phase 21 Complete**
+**Alpha Software - Phase 26 (GQA Scaffolding)**
 
-This is **alpha software** under active development. Components work individually but end-to-end integration is incomplete.
+This is **alpha software** under active development. Some tests have compilation errors; end-to-end integration is incomplete.
 
-| Component | Status | Tests | Notes |
-|-----------|--------|-------|-------|
-| GPU Kernels | ✅ Complete | 41/41 | Phases 1-4: scale, mask, softmax, RoPE, FlashAttention, SwiGLU, RMSNorm |
-| GPU Attention Path | ✅ Complete | 67/67 | Phase 7: 2-5x speedup over CPU |
-| Q4_1/Q5_0/Q5_1 Support | ✅ Complete | 13/13 | Phase 8: Full dequantization support |
-| Code Quality | ✅ Complete | 158/158 | Phase 15-21: 100% test health |
-| HIP/ROCm Backend | ✅ Complete | All | AMD RX 7900 XT tested |
-| GGUF Loader | ✅ Complete | All | Fixed spec compliance, vocab inference |
-| MXFP Quantization | ✅ Complete | 24/24 | Phase 5: MXFP4/MXFP6 (OCP MX Spec v1.0) |
-| KV Cache | ✅ Complete | All | Paged attention cache with bug fixes |
-| HTTP Server | ✅ Complete | All | OpenAI-compatible API with tests |
-| CLI | ⚠️ Experimental | All | Phase 21: Fixes applied, not fully tested |
-| Memory Pooling | ✅ Complete | All | Phase 10: 70% reduction in hipMalloc calls |
-| Bug Fixes | ✅ Complete | All | Phase 11-21: P0/P1/P2 bugs fixed |
-| Logging Cleanup | ✅ Complete | All | Phase 15: 101 eprintln! → tracing macros |
-| Naming Cleanup | ✅ Complete | All | Phase 15: AttentionBackend conflict resolved |
-| Async GPU Loading | ✅ Complete | 8/8 | Phase 17: ~5x model loading speedup |
-| GPU Testing Safety | ✅ Complete | 5/5 | Phase 20: Safe to run GPU tests |
+| Component | Status | Notes |
+|-----------|--------|-------|
+| GPU Kernels | ✅ Complete | Phases 1-4: scale, mask, softmax, RoPE, FlashAttention, SwiGLU, RMSNorm |
+| GPU Attention Path | ✅ Complete | Phase 7: GPU attention pipeline |
+| GGUF Loader | ✅ Complete | F32, F16, Q8_0, Q4_0, MXFP4/MXFP6 support |
+| MXFP Quantization | ✅ Complete | Phase 5: MXFP4/MXFP6 (OCP MX Spec v1.0) |
+| KV Cache | ✅ Complete | Paged attention cache |
+| HTTP Server | ✅ Complete | OpenAI-compatible API |
+| Test Suite | ⚠️ Partial | 6 test files have compilation errors (Jan 2026) |
+| CLI | ⚠️ Experimental | Untested end-to-end |
+| End-to-End | ❌ Not Tested | Integration incomplete |
 
-**Overall Test Health**: 274+ unit tests passing (100%)
+**Known Compilation Errors** (6 test files):
+- `attention_gpu_tests` - 1 error
+- `execution_plan_and_decode_tests` - 1 error
+- `glm_model_tests` - 6 errors
+- `gguf_loader_tests` - 1 error
+- `hip_backend_smoke_tests` - 6 errors
+- `multilayer_pipeline_tests` - 6 errors
+
 
 ## What Works
 
-### GPU Kernels (100% Complete)
+### GPU Kernels
 
-All transformer layer operations are GPU-accelerated with comprehensive testing:
+Core transformer layer operations have GPU implementations:
 
-- **Phase 1**: Basic kernels (scale, mask, softmax) - 3/3 tests
-- **Phase 2**: RoPE (Rotary Position Embedding) - 5/5 tests
-- **Phase 3a**: Non-Causal FlashAttention - 17/17 tests
-- **Phase 3b**: Causal Masking for autoregressive decoding - 8/8 tests
-- **Phase 4**: MLP Ops (SwiGLU, RMSNorm) - 8/8 tests
-- **Phase 7**: GPU Attention Path - 67/67 tests (2-5x speedup)
-- **Phase 8**: Model Support (Q4_1/Q5_0/Q5_1) - 13/13 tests
-- **Phase 9**: Code Quality (bug fixes) - 190/190 tests (at completion)
-- **Phase 10**: Memory Pooling (ROCm workaround) - Complete
-- **Phase 11**: P0/P1 Bug Fixes (5 bugs fixed) - Complete
-- **Phase 15**: P1/P2 Code Quality Fixes - Complete
-- **Phase 17**: Async GPU Loading - Complete
+- **Phase 1**: Basic kernels (scale, mask, softmax)
+- **Phase 2**: RoPE (Rotary Position Embedding)
+- **Phase 3a**: Non-Causal FlashAttention
+- **Phase 3b**: Causal Masking for autoregressive decoding
+- **Phase 4**: MLP Ops (SwiGLU, RMSNorm)
+- **Phase 7**: GPU Attention Path
+- **Phase 26**: GQA Support scaffolding (has compilation errors)
 
-**Total: 158/158 unit tests passing (100% test health)**
+### Async GPU Loading
 
-### Async GPU Loading (100% Complete)
+Phase 17: Multi-stream concurrent GPU uploads
 
-Phase 17: Option B - Multi-stream concurrent GPU uploads for ~5x faster model loading
+- HIP Events for synchronization
+- AsyncLoader for concurrent uploads
+- See: `docs/ASYNC_LOADING_E2E_TEST_REPORT.md`
 
-- **Performance**: ~60s → ~12s model loading time (~5x speedup)
-- **Phase A**: Parallel dequantization using Rayon (~4x CPU speedup)
-- **Phase B**: Concurrent GPU uploads using 4 HIP streams (~4x GPU speedup)
-- **Phase C**: Thread-safe GPU cache population
-- **HIP Events**: FFI bindings + RAII wrapper for synchronization
-- **AsyncLoader**: Multi-stream upload manager with automatic stream selection
-- **Tests**: 8 new tests (3 HipEvent + 5 AsyncLoader)
+### MXFP Quantization
 
-**E2E Test Report**: `docs/ASYNC_LOADING_E2E_TEST_REPORT.md`
+Phase 5: OCP MX Specification v1.0 compliant MXFP4/MXFP6
 
-### MXFP Quantization (100% Complete)
-
-Phase 5: OCP MX Specification v1.0 compliant MXFP4/MXFP6 support
-
-- **E8M0 Scale Format**: 8-bit exponent-only scaling (24/24 tests)
-- **MXFP4**: 4-bit E2M1 format, 4x memory reduction vs FP16
-- **MXFP6**: 6-bit E2M3 format, 2.67x memory reduction vs FP16
-- **Block Scaling**: 32 elements per block with shared E8M0 scale
-- **GGUF Integration**: MXFP tensor types added to loader
-
-**Total: 24/24 MXFP tests passing**
+- E8M0 Scale Format (8-bit exponent-only)
+- MXFP4: 4-bit E2M1 format
+- MXFP6: 6-bit E3M2 format
+- Block Scaling: 32 elements per block
 
 ### HIP/ROCm Integration
 
@@ -89,7 +73,7 @@ Phase 5: OCP MX Specification v1.0 compliant MXFP4/MXFP6 support
 - Fixed spec compliance (array encoding, value types, tensor types)
 - Vocab size inference from tensor shapes
 - Architecture detection (Qwen2, LLaMA, Mistral, GLM)
-- Supports: F32, F16, Q8_0, Q4_0, **Q4_1, Q5_0, Q5_1**, MXFP4, MXFP6
+- Supports: F32, F16, Q8_0, Q4_0, MXFP4, MXFP6
 
 ### Infrastructure
 
@@ -326,17 +310,16 @@ Inspired by:
 
 ## Disclaimer
 
-**This is alpha software.** It is not suitable for any critical use. Components work individually but end-to-end model execution is not fully tested. APIs will change. Bugs exist.
+**This is alpha software.** It is not suitable for any critical use. APIs will change. Bugs exist.
 
 **What this means:**
-- ✅ GPU kernels work (274+ tests pass)
-- ✅ Async loading (~60x total speedup with lazy loading)
-- ✅ Individual components are tested
-- ⚠️ CLI fixes applied (Phase 21) but not fully tested end-to-end
+- ✅ Some GPU kernels are implemented
+- ✅ Individual components have tests
+- ⚠️ 6 test files have compilation errors (Jan 2026)
 - ⚠️ End-to-end inference not fully tested
 - ❌ Not ready for any real deployment
 - ❌ Use at your own risk
 
 ---
 
-**Status**: Alpha | **Tests**: 274+ Passing (100%) | **Code Quality**: B+ (82/100) | **Hardware**: AMD Radeon RX 7900 XT (gfx1100) | **Last Updated**: January 2026 | **Phase**: 21 Complete
+**Status**: Alpha | **Tests**: Partial (6 files with compilation errors) | **Hardware**: AMD Radeon RX 7900 XT (gfx1100) | **Last Updated**: January 2026 | **Phase**: 26 (GQA Scaffolding)

@@ -5,6 +5,44 @@
 
 ---
 
+## [Unreleased] - 2026-01-14
+
+### Test Suite: GPU_FIXTURE Import Fixes ✅ COMPLETE
+
+**Summary**: Fixed compilation errors in 8 integration test files caused by incorrect `GPU_FIXTURE` import path.
+
+#### Problem
+
+Integration tests were using `rocmforge::GPU_FIXTURE` which doesn't exist. The correct path is `rocmforge::backend::gpu_test_common::GPU_FIXTURE`.
+
+#### Files Fixed
+
+| File | Changes |
+|------|---------|
+| `tests/hip_buffer_invariant_tests.rs` | Added correct import, removed 4 duplicate imports |
+| `tests/kv_cache_and_scratch_tests.rs` | Added correct import, removed 5 duplicate imports |
+| `tests/mlp_validation_tests.rs` | Added correct import, removed 6 duplicate imports |
+| `tests/transformer_integration_tests.rs` | Added correct import, fixed incorrect `.is_ok()`/`.unwrap()` pattern |
+| `tests/kv_cache_tests.rs` | Added correct import, removed duplicate imports |
+| `tests/execution_plan_weight_mapping_tests.rs` | Added correct import |
+| `tests/execution_plan_construction_tests.rs` | Added correct import |
+| `tests/execution_plan_forward_pass_tests.rs` | Added correct import |
+
+#### Technical Details
+
+**Root Cause**: The `GPU_FIXTURE` static is defined in `src/backend/gpu_test_common.rs` but was not re-exported at the crate root for integration tests.
+
+**Solution**: Added explicit import path `use rocmforge::backend::gpu_test_common::GPU_FIXTURE;` to all affected test files.
+
+**Additional Fix**: `transformer_integration_tests.rs` was incorrectly calling `.is_ok()` and `.unwrap()` on the result of `fixture.backend()`, which returns `&Arc<HipBackend>` directly (not a `Result`).
+
+#### Results
+
+- Before: ❌ 8 test files failed to compile with "cannot find value `GPU_FIXTURE` in crate `rocmforge`"
+- After: ✅ All 8 test files compile successfully
+
+---
+
 ## [Unreleased] - 2026-01-06
 
 ### Phase 8: Model Support 🔄 IN PROGRESS
