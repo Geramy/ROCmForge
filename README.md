@@ -222,14 +222,9 @@ watch -n 1 rocm-smi
 ```bash
 # Inspect GGUF model metadata
 ./target/release/rocmforge_cli inspect --model /path/to/model.gguf
-
-# Generate text (experimental - fixes applied but not fully tested)
-./target/release/rocmforge_cli generate \
-  --gguf /path/to/your/model.gguf \
-  --prompt "The future of AI is" \
-  --max-tokens 20 \
-  --temperature 0.7
 ```
+
+**Note**: Text generation (`generate` command) is currently **non-functional** due to inference hang during GPU kernel execution (see Known Issue #2). Use HTTP server for testing individual components.
 
 ### HTTP Server (Recommended for Testing)
 
