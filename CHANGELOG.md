@@ -7,6 +7,45 @@
 
 ## [Unreleased] - 2026-01-14
 
+### Phase 2: Fixed-Shape Tensors ✅ COMPLETE
+
+**Summary**: Eliminated O(tokens) graph rebuilds by removing unnecessary `set_shape()` calls. Tensors are pre-allocated with `max_seq_len` at graph construction.
+
+#### Problem
+
+The original implementation called `set_shape()` on every token generation:
+
+```rust
+// Shape mutation EVERY token:
+graph.tensors[plan.kv_read_k_id.0].set_shape(vec![new_len, num_heads, plan.head_dim]);
+graph.tensors[plan.kv_read_v_id.0].set_shape(vec![new_len, num_heads, plan.head_dim]);
+graph.tensors[plan.scores_id.0].set_shape(vec![1, new_len]);
+graph.tensors[plan.softmax_id.0].set_shape(vec![1, new_len]);
+```
+
+This triggered graph recalculations and potential buffer reallocations on each token.
+
+#### Solution
+
+Removed `set_shape()` calls entirely. The tensors were **already** pre-allocated with `max_seq_len` during graph construction:
+- `kv_read_k_id`: `[max_seq_len, num_heads, head_dim]`
+- `scores_id`: `[1, max_seq_len]`
+
+The binding already uses offset-based views (`sub_buffer_view()`) for correct positioning, so the shape changes were unnecessary.
+
+#### Files Modified
+
+| File | Changes |
+|------|---------|
+| `src/model/execution_plan.rs` | Removed 4 `set_shape()` calls in `forward_layer_ggml_decode()` |
+
+#### Results
+
+- Before: ❌ O(tokens) graph rebuilds (recalculating on every token)
+- After: ✅ O(1) graph setup, O(tokens) simple offset-based binding
+
+---
+
 ### Phase 1: Single-Pass GGUF Loading ✅ COMPLETE
 
 **Summary**: Eliminated redundant GGUF file parsing. The GGUF file is now parsed once and reused for both config extraction and weight loading.

@@ -5,9 +5,13 @@
 
 ## Current Phase
 
-Phase 2: Fixed-Shape Tensors with Offset Views
+Phase 3: Quantized MatMul Operations
 
 ## Completed Work
+
+### Phase 2: Fixed-Shape Tensors (2026-01-14) ✅
+
+Removed unnecessary `set_shape()` calls that were causing O(tokens) graph rebuilds. Tensors were already pre-allocated with max_seq_len at graph construction.
 
 ### Phase 1: Single-Pass GGUF Loading (2026-01-14) ✅
 

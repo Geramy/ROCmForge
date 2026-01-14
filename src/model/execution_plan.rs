@@ -1609,10 +1609,16 @@ impl ExecutionPlan {
             .graph
             .lock()
             .map_err(|_| HipError::GenericError("Layer graph lock poisoned".to_string()))?;
-        graph.tensors[plan.kv_read_k_id.0].set_shape(vec![new_len, plan.num_heads, plan.head_dim]);
-        graph.tensors[plan.kv_read_v_id.0].set_shape(vec![new_len, plan.num_heads, plan.head_dim]);
-        graph.tensors[plan.scores_id.0].set_shape(vec![1, new_len]);
-        graph.tensors[plan.softmax_id.0].set_shape(vec![1, new_len]);
+
+        // PHASE 2: Fixed-shape tensors - NO set_shape() calls!
+        // Tensors are pre-allocated with max_seq_len at graph construction.
+        // Removing set_shape() eliminates O(tokens) graph rebuilds.
+        // Binding uses offset-based views (sub_buffer_view) for correct positioning.
+        // Previously:
+        //   graph.tensors[plan.kv_read_k_id.0].set_shape(vec![new_len, plan.num_heads, plan.head_dim]);
+        //   graph.tensors[plan.kv_read_v_id.0].set_shape(vec![new_len, plan.num_heads, plan.head_dim]);
+        //   graph.tensors[plan.scores_id.0].set_shape(vec![1, new_len]);
+        //   graph.tensors[plan.softmax_id.0].set_shape(vec![1, new_len]);
 
         let mut ggml_backend = plan
             .backend
