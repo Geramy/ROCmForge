@@ -155,14 +155,23 @@ impl GraphOptimizer {
 
     /// Eliminate dead code - nodes not contributing to any output.
     fn eliminate_dead_code(&self, graph: &mut Graph, dep_info: &mut DependencyInfo) -> usize {
-        // Find all tensors that are graph outputs (not used as input to any node)
         let mut live_tensors: HashSet<TensorId> = HashSet::new();
 
-        // Add all tensors that are never used as inputs (outputs of the graph)
-        for tensor_id in 0..graph.tensors.len() {
-            let tid = TensorId(tensor_id);
-            if !dep_info.is_used_as_input(tid) {
-                live_tensors.insert(tid);
+        // Check if graph has explicit output markers
+        let has_explicit_outputs = !graph.get_outputs().is_empty();
+
+        if has_explicit_outputs {
+            // Use only explicitly marked outputs as starting points
+            for &output_tid in graph.get_outputs() {
+                live_tensors.insert(output_tid);
+            }
+        } else {
+            // Fallback: add all tensors that are never used as inputs (outputs of the graph)
+            for tensor_id in 0..graph.tensors.len() {
+                let tid = TensorId(tensor_id);
+                if !dep_info.is_used_as_input(tid) {
+                    live_tensors.insert(tid);
+                }
             }
         }
 
@@ -859,5 +868,94 @@ mod tests {
             graph.tensors.len() < initial_tensor_count,
             "CSE should clean up orphaned tensor descriptors"
         );
+    }
+
+    // TDD TEST: DCE uses explicit output markers
+    #[test]
+    fn test_dce_uses_explicit_output_markers() {
+        let mut graph = Graph::new();
+
+        // Create two chains: input1 -> output1 (marked) and input2 -> output2 (unmarked)
+        let input1 = graph.add_tensor(make_tensor_desc(vec![10]));
+        let output1 = graph.add_tensor(make_tensor_desc(vec![10]));
+        let input2 = graph.add_tensor(make_tensor_desc(vec![10]));
+        let output2 = graph.add_tensor(make_tensor_desc(vec![10]));
+
+        graph.add_node(Op::Add, vec![input1], vec![output1]);
+        graph.add_node(Op::Add, vec![input2], vec![output2]);
+
+        // Mark ONLY output1 (not output2)
+        graph.mark_output(output1);
+
+        assert_eq!(graph.nodes.len(), 2, "Should start with 2 nodes");
+
+        // Run DCE
+        let optimizer = GraphOptimizer::new()
+            .without_cse()
+            .without_noop_elimination()
+            .without_layout_optimization();
+        let stats = optimizer.optimize(&mut graph);
+
+        // DCE should remove the second chain (input2 -> output2)
+        assert_eq!(stats.dce_nodes_removed, 1, "DCE should remove unmarked chain");
+        assert_eq!(graph.nodes.len(), 1, "Only marked chain should remain");
+    }
+
+    // TDD TEST: DCE preserves nodes contributing to marked outputs
+    #[test]
+    fn test_dce_preserves_nodes_for_marked_outputs() {
+        let mut graph = Graph::new();
+
+        // Create a chain: input -> temp -> output
+        let input = graph.add_tensor(make_tensor_desc(vec![10]));
+        let temp = graph.add_tensor(make_tensor_desc(vec![10]));
+        let output = graph.add_tensor(make_tensor_desc(vec![10]));
+
+        graph.add_node(Op::Add, vec![input], vec![temp]);
+        graph.add_node(Op::Add, vec![temp], vec![output]);
+
+        // Mark the final output
+        graph.mark_output(output);
+
+        // Run DCE
+        let optimizer = GraphOptimizer::new()
+            .without_cse()
+            .without_noop_elimination()
+            .without_layout_optimization();
+        let stats = optimizer.optimize(&mut graph);
+
+        // DCE should keep all nodes since they contribute to marked output
+        assert_eq!(stats.dce_nodes_removed, 0, "DCE should not remove nodes leading to marked output");
+        assert_eq!(graph.nodes.len(), 2, "All nodes should be preserved");
+    }
+
+    // TDD TEST: Multiple outputs can be marked
+    #[test]
+    fn test_dce_handles_multiple_marked_outputs() {
+        let mut graph = Graph::new();
+
+        // Create two separate chains
+        let input1 = graph.add_tensor(make_tensor_desc(vec![10]));
+        let output1 = graph.add_tensor(make_tensor_desc(vec![10]));
+        let input2 = graph.add_tensor(make_tensor_desc(vec![10]));
+        let output2 = graph.add_tensor(make_tensor_desc(vec![10]));
+
+        graph.add_node(Op::Add, vec![input1], vec![output1]);
+        graph.add_node(Op::Add, vec![input2], vec![output2]);
+
+        // Mark both outputs
+        graph.mark_output(output1);
+        graph.mark_output(output2);
+
+        // Run DCE
+        let optimizer = GraphOptimizer::new()
+            .without_cse()
+            .without_noop_elimination()
+            .without_layout_optimization();
+        let stats = optimizer.optimize(&mut graph);
+
+        // Both chains should be preserved
+        assert_eq!(stats.dce_nodes_removed, 0, "Both chains should be preserved");
+        assert_eq!(graph.nodes.len(), 2, "All nodes should be preserved");
     }
 }
