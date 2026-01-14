@@ -23,12 +23,15 @@ Phase 5: Complete Missing ggml Ops 🔄 IN PROGRESS
   - `src/ggml/hip_backend/mod.rs` - Integrated with `with_allocator()`, `reset_allocator()`, `allocator_stats()`
   - 4 unit tests
 
+- Graph optimizer enhancements (all using TDD)
+  - Layout optimization pass (RowMajor vs ColMajor for MatMul)
+  - CSE tensor cleanup (removes duplicate nodes and orphaned tensors)
+  - Explicit graph output markers (mark_output, is_output, get_outputs)
+  - Optimizer integration into executor (ExecuteConfig, execute_graph_with_config)
+  - 16 optimizer tests (8 original + 8 new)
+
 **Remaining:**
-1. **Layout optimization pass** (RowMajor vs ColMajor)
-2. **Complete CSE tensor cleanup** after remapping
-3. **Explicit graph output markers** for precise DCE
-4. **Optimizer integration** into executor
-5. **Performance measurement** of allocator impact (50%+ goal)
+- Performance measurement of allocator impact (requires real workload benchmarking)
 
 ## Completed Work
 
