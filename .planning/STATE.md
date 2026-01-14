@@ -24,9 +24,11 @@ Phase 5: Complete Missing ggml Ops 🔄 IN PROGRESS
   - 4 unit tests
 
 **Remaining:**
-- Real-world performance measurement of allocator impact
-- Optimizer integration into executor
-- Layout optimization (RowMajor vs ColMajor)
+1. **Layout optimization pass** (RowMajor vs ColMajor)
+2. **Complete CSE tensor cleanup** after remapping
+3. **Explicit graph output markers** for precise DCE
+4. **Optimizer integration** into executor
+5. **Performance measurement** of allocator impact (50%+ goal)
 
 ## Completed Work
 

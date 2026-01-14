@@ -73,6 +73,50 @@ Implemented graph optimization passes inspired by llama.cpp's graph optimization
 - CSE remapping is simplified - full tensor cleanup TODO
 - DCE treats all unused tensors as outputs (needs explicit graph markers)
 
+## Remaining Work
+
+### 1. Layout Optimization Pass (TODO)
+Add layout optimization to `src/ggml/optimizer.rs`:
+- Analyze operation patterns to determine optimal tensor layouts
+- Insert layout conversions (transpose) where beneficial
+- Prefer RowMajor for element-wise ops, ColMajor for matmul
+- Track layout requirements per operation
+- Minimize layout conversion overhead
+
+**Reference:** llama.cpp `ggml_optimize_graph()` layout heuristics
+
+### 2. Complete CSE Tensor Cleanup (TODO)
+Enhance CSE in `src/ggml/optimizer.rs`:
+- Remove tensors that are no longer referenced after remapping
+- Update tensor registry to reflect remapped outputs
+- Clean up orphaned tensor descriptors
+- Ensure graph consistency after CSE pass
+
+**Current Issue:** CSE remaps tensor IDs but doesn't clean up the tensor array
+
+### 3. Explicit Graph Output Markers (TODO)
+Enhance DCE with proper graph output tracking:
+- Add `Graph::mark_output(tensor_id)` method
+- Track which tensors are explicit graph outputs
+- Only preserve nodes contributing to marked outputs
+- Allow multiple output tensors per graph
+
+**Current Issue:** DCE treats all unused tensors as outputs (conservative but imprecise)
+
+### 4. Optimizer Integration (TODO)
+Integrate optimizer into `src/ggml/executor.rs`:
+- Call `optimizer.optimize()` before graph execution
+- Make optimization configurable (enable/disable per run)
+- Expose optimization stats to caller
+- Reset allocator after optimization
+
+### 5. Performance Measurement (TODO)
+Measure allocator impact on real workloads:
+- Run inference with and without allocator
+- Compare allocation counts/reuse ratios
+- Measure execution time differences
+- Validate 50%+ reduction goal
+
 ## Files Created
 
 | File | Purpose |
@@ -93,8 +137,18 @@ Implemented graph optimization passes inspired by llama.cpp's graph optimization
 
 ## Success Criteria
 
+### Core Implementation
 - [x] Accumulate op implemented and tested
 - [x] Tensor allocator implemented and tested
-- [ ] Tensor allocator reduces allocations by 50%+ (needs real workload measurement)
 - [x] Graph optimizer eliminates redundant ops
 - [x] All tests pass (218 tests)
+
+### Optimizer Enhancements (TODO)
+- [ ] Layout optimization pass (RowMajor vs ColMajor)
+- [ ] CSE tensor cleanup after remapping
+- [ ] Explicit graph output markers for DCE
+- [ ] Optimizer integrated into executor
+
+### Performance Validation (TODO)
+- [ ] Tensor allocator reduces allocations by 50%+
+- [ ] Real-world workload measurement completed
