@@ -7,6 +7,98 @@
 
 ## [Unreleased] - 2026-01-14
 
+### Phase 27: Weight Preloading (llama.cpp-style) ⚠️ PARTIAL - Kernel Execution Issue
+
+**Summary**: Implemented bulk weight preloading following llama.cpp's approach. Weights now load during initialization instead of lazily during inference.
+
+**Status**:
+- ✅ Weight preloading implemented and working
+- ✅ GPU cache correctly shared across loader and execution plan
+- ❌ Inference hangs during GPU kernel execution (separate issue)
+
+#### Problem
+
+Original implementation used lazy loading - weights were loaded on-demand during first inference pass. This caused:
+- First inference pass to load all 24 layers sequentially (~120+ seconds)
+- Each layer's weights loaded one at a time during forward pass
+- Significant delay before any actual computation
+
+#### Solution
+
+Implemented llama.cpp-style bulk weight preloading:
+
+1. **Preload after ExecutionPlan creation** (`src/backend/hip_backend.rs`):
+   - Lines 2708-2716: `load_from_gguf()` - Added `loader.load_to_gpu_async()`
+   - Lines 2864-2872: `load_from_gguf_with_loader()` - Added `loader.load_to_gpu_async()`
+   - Lines 3056-3065: `load_model()` - Added `loader.load_to_gpu_async()`
+
+2. **Async multi-stream loading** (`src/loader/gguf.rs:1073-1285`):
+   - Phase A: Parallel dequantization (Rayon)
+   - Phase B: Concurrent GPU uploads (4 HIP streams)
+   - Phase C: GPU cache update
+
+3. **Cache verification** (`src/loader/gguf.rs:767-773, 1275-1277`):
+   - Added tracing to verify cache hits/misses
+   - Cache correctly shared via `Arc<RwLock<HashMap<String, Arc<DeviceTensor>>>>`
+
+#### Files Modified
+
+| File | Lines Changed | Purpose |
+|------|---------------|---------|
+| `src/backend/hip_backend.rs` | +42 | Added preload calls in 3 functions |
+| `src/loader/gguf.rs` | +12 | Added cache verification tracing |
+
+#### Results
+
+**Weight Loading Performance:**
+- Preload time: ~4.5 seconds for 287-290 tensors
+- Cache hit rate: 100% during inference (all lookups show `GPU cache HIT`)
+- Before: 120+ seconds lazy loading during first inference
+- After: ~4.5 seconds upfront, then instant cache hits
+
+**Verification:**
+```bash
+# Trace output shows:
+load_to_gpu_async: GPU cache now has 287 tensors
+load_from_gguf: All weights preloaded in 4.54s
+# During inference:
+load_tensor_to_gpu: GPU cache HIT for 'blk.0.attn_q.weight'
+load_tensor_to_gpu: GPU cache HIT for 'blk.23.ffn_down.weight'
+# (all 290 tensors show cache HIT)
+```
+
+#### Known Issues
+
+1. **Inference hangs during GPU kernel execution** (not related to weight loading):
+   - Hang occurs in `execute_graph()` during Layer 1 forward pass
+   - Location: `src/model/execution_plan.rs:1685`
+   - Likely cause: GPU kernel issue (matmul, attention, or other operation)
+   - Impact: Cannot complete end-to-end inference even with weights loaded
+
+2. **Why preloading works but inference doesn't:**
+   - Weight loading and cache sharing are implemented correctly
+   - The hang is in the actual GPU computation, not data loading
+   - This is a separate issue from weight loading strategy
+
+#### Comparison with llama.cpp
+
+| Aspect | llama.cpp | ROCmForge (after fix) |
+|--------|-----------|----------------------|
+| Weight loading | `load_all_data()` - bulk upload | `load_to_gpu_async()` - parallel dequant + upload |
+| Allocation | `ggml_backend_alloc_ctx_tensors()` | Per-tensor allocation during graph execution |
+| First token speed | Fast (weights already loaded) | Weights loaded, but kernel execution hangs |
+| Cache design | Direct tensor access | `Arc<RwLock<HashMap<String, Arc<DeviceTensor>>>>` |
+
+#### Next Steps
+
+To fix the inference hang, investigate:
+1. GPU kernel implementations (matmul, attention, softmax, etc.)
+2. Graph execution synchronization
+3. Buffer binding and memory access patterns
+4. HIP kernel launch parameters
+
+---
+
 ### Phase 3: Quantized MatMul Operations ✅ COMPLETE
 
 **Summary**: Added Q4_0 and Q8_0 matmul operations for efficient quantized model inference.

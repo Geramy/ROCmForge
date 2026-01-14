@@ -122,8 +122,10 @@ impl GgmlBackend for HipGgmlBackend {
         _inputs: &[TensorId],
         _outputs: &[TensorId],
     ) -> GgmlResult<()> {
+        eprintln!(">>> execute_op: op={:?}", op);
         match op {
             Op::GetRows => {
+                eprintln!(">>> execute_op: GetRows START");
                 let inputs = _inputs;
                 let outputs = _outputs;
                 if inputs.len() != 2 || outputs.len() != 1 {
@@ -131,6 +133,7 @@ impl GgmlBackend for HipGgmlBackend {
                         "GetRows expects 2 inputs and 1 output".to_string(),
                     ));
                 }
+                eprintln!(">>> execute_op: GetRows input/output count validated");
 
                 let weights_desc = self
                     .tensor_desc(inputs[0])
@@ -141,6 +144,7 @@ impl GgmlBackend for HipGgmlBackend {
                 let output_desc = self
                     .tensor_desc(outputs[0])
                     .ok_or_else(|| GgmlError::InvalidShape("Missing output desc".to_string()))?;
+                eprintln!(">>> execute_op: GetRows tensor descriptors obtained");
 
                 if weights_desc.shape.len() != 2 {
                     return Err(GgmlError::InvalidShape(
@@ -156,11 +160,16 @@ impl GgmlBackend for HipGgmlBackend {
                         ));
                     }
                 };
-                let n_tokens = tokens_desc.element_count();
+                // Use output_desc.shape[0] for actual token count, not tokens_desc.element_count()
+                // tokens buffer may be padded to max_seq_len, but output shape reflects actual tokens
+                let actual_n_tokens = output_desc.shape[0];
+                let buffer_n_tokens = tokens_desc.element_count();
+                eprintln!(">>> execute_op: GetRows n_embd={}, vocab_size={}, actual_n_tokens={}, buffer_n_tokens={}, layout={:?}",
+                    n_embd, vocab_size, actual_n_tokens, buffer_n_tokens, weights_desc.layout);
 
-                if output_desc.element_count() != n_embd * n_tokens {
+                if output_desc.element_count() != n_embd * actual_n_tokens {
                     return Err(GgmlError::InvalidShape(
-                        "Output size does not match n_embd * n_tokens".to_string(),
+                        "Output size does not match n_embd * actual_n_tokens".to_string(),
                     ));
                 }
 
@@ -173,27 +182,43 @@ impl GgmlBackend for HipGgmlBackend {
                 let output = self
                     .buffer(outputs[0])
                     .ok_or_else(|| GgmlError::Backend("Missing output buffer".to_string()))?;
+                eprintln!(">>> execute_op: GetRows buffers obtained");
 
-                let mut tokens = vec![0u32; n_tokens];
+                eprintln!(">>> execute_op: GetRows about to copy tokens to host (actual_n_tokens={})...", actual_n_tokens);
+                let mut tokens = vec![0u32; actual_n_tokens];
                 tokens_buf
                     .copy_to_host(&mut tokens)
                     .map_err(|e| GgmlError::Backend(e.to_string()))?;
+                eprintln!(">>> execute_op: GetRow tokens copied to host (full buffer): {:?}", &tokens[..tokens.len().min(10)]);
+
+                // Truncate to actual non-zero tokens (we use 0-padding)
+                // This avoids processing 2047 padding tokens unnecessarily
+                let actual_tokens: Vec<u32> = tokens.iter()
+                    .take_while(|&&t| t != 0)
+                    .copied()
+                    .collect();
+                eprintln!(">>> execute_op: GetRows actual (non-padded) tokens: {:?}, count={}", actual_tokens, actual_tokens.len());
+
                 crate::ggml::hip_backend::ops::get_rows::validate_token_ids(
-                    &tokens,
+                    &actual_tokens,
                     vocab_size,
                 )
                 .map_err(|e| GgmlError::Backend(e.to_string()))?;
+                eprintln!(">>> execute_op: GetRows token IDs validated");
 
+                eprintln!(">>> execute_op: GetRows about to call get_rows with {} tokens...", actual_tokens.len());
                 crate::ggml::hip_backend::ops::get_rows::get_rows(
                     &self.backend,
                     weights,
-                    &tokens,
+                    &actual_tokens,
                     n_embd,
                     vocab_size,
                     weights_desc.layout,
                     output,
                 )
-                .map_err(|e| GgmlError::Backend(e.to_string()))
+                .map_err(|e| GgmlError::Backend(e.to_string()))?;
+                eprintln!(">>> execute_op: GetRows complete");
+                Ok(())
             }
             Op::MatMul => {
                 let inputs = _inputs;

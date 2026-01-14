@@ -2705,6 +2705,18 @@ impl ModelRuntime {
         tracing::debug!("load_from_gguf: Execution plan created successfully");
         eprintln!("load_from_gguf: Execution plan created successfully");
 
+        // PRELOAD: Load all core model weights to GPU (llama.cpp-style bulk loading)
+        // This avoids the slowdown of lazy loading during first inference pass.
+        // Lazy loading remains available for optional/extra weights.
+        tracing::debug!("load_from_gguf: Preloading all model weights to GPU...");
+        eprintln!("load_from_gguf: Preloading all model weights to GPU...");
+        let _preload_start = std::time::Instant::now();
+        loader.load_to_gpu_async(&backend)
+            .map_err(|e| HipError::GenericError(format!("Failed to preload weights: {}", e)))?;
+        let preload_time = _preload_start.elapsed();
+        tracing::debug!("load_from_gguf: Weight preload complete in {:?}", preload_time);
+        eprintln!("load_from_gguf: All weights preloaded in {:.2}s", preload_time.as_secs_f64());
+
         tracing::debug!("load_from_gguf: ModelRuntime created successfully");
         eprintln!("load_from_gguf: ModelRuntime created successfully, returning...");
         Ok(ModelRuntime {
@@ -2777,6 +2789,18 @@ impl ModelRuntime {
             crate::model::execution_plan::ExecutionPlan::from_gguf(&backend, &loader)?;
         tracing::debug!("load_from_gguf: Execution plan created successfully");
         eprintln!("load_from_gguf: Execution plan created successfully");
+
+        // PRELOAD: Load all core model weights to GPU (llama.cpp-style bulk loading)
+        // This avoids the slowdown of lazy loading during first inference pass.
+        // Lazy loading remains available for optional/extra weights.
+        tracing::debug!("load_from_gguf: Preloading all model weights to GPU...");
+        eprintln!("load_from_gguf: Preloading all model weights to GPU...");
+        let _preload_start = std::time::Instant::now();
+        loader.load_to_gpu_async(&backend)
+            .map_err(|e| HipError::GenericError(format!("Failed to preload weights: {}", e)))?;
+        let preload_time = _preload_start.elapsed();
+        tracing::debug!("load_from_gguf: Weight preload complete in {:?}", preload_time);
+        eprintln!("load_from_gguf: All weights preloaded in {:.2}s", preload_time.as_secs_f64());
 
         tracing::debug!("load_from_gguf: ModelRuntime created successfully");
         eprintln!("load_from_gguf: ModelRuntime created successfully, returning...");
@@ -3028,6 +3052,17 @@ impl ModelRuntime {
         let execution_plan =
             crate::model::execution_plan::ExecutionPlan::from_gguf(&self.backend, &loader)?;
         tracing::debug!("load_model: Execution plan created successfully");
+
+        // PRELOAD: Load all core model weights to GPU (llama.cpp-style bulk loading)
+        // This avoids the slowdown of lazy loading during first inference pass.
+        tracing::debug!("load_model: Preloading all model weights to GPU...");
+        eprintln!("load_model: Preloading all model weights to GPU...");
+        let _preload_start = std::time::Instant::now();
+        loader.load_to_gpu_async(&self.backend)
+            .map_err(|e| HipError::GenericError(format!("Failed to preload weights: {}", e)))?;
+        let preload_time = _preload_start.elapsed();
+        tracing::debug!("load_model: Weight preload complete in {:?}", preload_time);
+        eprintln!("load_model: All weights preloaded in {:.2}s", preload_time.as_secs_f64());
 
         tracing::debug!("load_model: ModelRuntime created successfully");
         Ok(ModelRuntime {

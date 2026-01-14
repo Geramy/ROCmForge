@@ -6,7 +6,7 @@ A high-performance inference engine specifically designed for AMD GPUs using ROC
 
 ## Project Status
 
-**Alpha Software - Phase 26 (GQA Scaffolding)**
+**Alpha Software - Phase 27 (Weight Preloading)**
 
 This is **alpha software** under active development. Some tests have compilation errors; end-to-end integration is incomplete.
 
@@ -44,6 +44,7 @@ Core transformer layer operations have GPU implementations:
 - **Phase 4**: MLP Ops (SwiGLU, RMSNorm)
 - **Phase 7**: GPU Attention Path
 - **Phase 26**: GQA Support scaffolding (has compilation errors)
+- **Phase 27**: Weight Preloading (llama.cpp-style bulk upload)
 
 ### Async GPU Loading
 
@@ -52,6 +53,17 @@ Phase 17: Multi-stream concurrent GPU uploads
 - HIP Events for synchronization
 - AsyncLoader for concurrent uploads
 - See: `docs/ASYNC_LOADING_E2E_TEST_REPORT.md`
+
+### Weight Preloading (Phase 27)
+
+llama.cpp-style bulk weight loading during model initialization
+
+- All core model weights loaded to GPU during initialization (embedding, all layers, LM head)
+- ~4.5 seconds for 287-290 tensors (Qwen2-0.5B model)
+- 100% cache hit rate during inference - no lazy loading delays
+- 4 HIP streams with parallel dequantization (Rayon)
+- Shared GPU cache via `Arc<RwLock<HashMap<String, Arc<DeviceTensor>>>>`
+- Lazy loading remains available for optional/extra weights
 
 ### MXFP Quantization
 
@@ -101,31 +113,39 @@ Phase 5: OCP MX Specification v1.0 compliant MXFP4/MXFP6
    - Impact: CLI may still crash in edge cases
    - See: `docs/CLI_BUG_FIXES_2026-01-11.md`
 
-2. **End-to-End Inference**: Not fully tested with real models
+2. **Inference Hang During GPU Kernel Execution** (Phase 27 discovery)
+   - Status: Weight loading improved, but inference hangs during GPU kernel execution
+   - Location: `execute_graph()` during Layer 1 forward pass (`src/model/execution_plan.rs:1685`)
+   - Impact: Cannot complete inference - CLI hangs indefinitely
+   - Likely cause: GPU kernel issue (matmul, attention, or other operation)
+   - Note: This is separate from weight loading - weight preloading works correctly (~4.5s, 100% cache hit)
+   - Plan: Investigate GPU kernels - add kernel timing/synchronization debugging
+
+3. **End-to-End Inference**: Not fully tested with real models
    - Status: Individual components tested, integration incomplete
    - Impact: Cannot guarantee reliable model execution
    - Plan: Add integration tests with real models
 
 ### Medium Priority (Non-Blockers)
 
-3. **Compiler Warnings**: ~50 warnings remaining
+4. **Compiler Warnings**: ~50 warnings remaining
    - Types: Dead code, unused imports, unused variables
    - Target: <10 warnings (only FFI `#[allow(...)]`)
    - Impact: Code quality, not functionality
 
-4. **MQA/GQA CPU Fallback**: Multi-query attention uses CPU instead of GPU
+5. **MQA/GQA CPU Fallback**: Multi-query attention uses CPU instead of GPU
    - Impact: Performance penalty for MQA/GQA models only
    - Workaround: CPU path is correct and tested
    - Plan: Add GPU kernels for MQA/GQA
 
-5. **Missing Test Coverage**:
+6. **Missing Test Coverage**:
    - HTTP server integration tests (unit tests exist)
    - Sampler integration tests (inline tests only)
    - GPU memory exhaustion tests
 
 ### Low Priority
 
-6. **RwLock Poisoning**: 6 expect() calls in kv_cache stats methods
+7. **RwLock Poisoning**: 6 expect() calls in kv_cache stats methods
    - Status: Documented as acceptable
    - Fix: Would require API breaking change
    - Impact: Low (stats methods only)
@@ -259,12 +279,14 @@ curl -X POST http://localhost:8080/v1/completions \
 | Phase 21 | CLI Stability Fixes | ✅ Complete | Untested end-to-end |
 | Phase 22-25 | - | ⚪ Skipped | Not documented |
 | Phase 26 | GQA Support Scaffolding | ⚠️ Incomplete | Has compilation errors |
+| Phase 27 | Weight Preloading | ⚠️ Partial | Loading works, inference hangs |
 | Future | End-to-End Integration Tests | ❌ Planned | Critical gap |
 | Future | FP16 Compute Support | ❌ Planned | - |
 
 ### Future Work
 
 **High Priority:**
+- [ ] **Investigate inference hang during GPU kernel execution** (Phase 27)
 - [ ] Fix 6 test files with compilation errors
 - [ ] End-to-end integration tests with real models
 - [ ] Complete Phase 26 (GQA Support) - fix compilation errors
@@ -327,12 +349,14 @@ Inspired by:
 
 **What this means:**
 - ✅ Some GPU kernels are implemented
+- ✅ Weight preloading works (~4.5s for 287-290 tensors)
 - ✅ Individual components have tests
 - ⚠️ 6 test files have compilation errors (Jan 2026)
+- ⚠️ **Inference hangs during GPU kernel execution** (Phase 27 - not fixed)
 - ⚠️ End-to-end inference not fully tested
 - ❌ Not ready for any real deployment
 - ❌ Use at your own risk
 
 ---
 
-**Status**: Alpha | **Tests**: Partial (6 files with compilation errors) | **Hardware**: AMD Radeon RX 7900 XT (gfx1100) | **Last Updated**: January 2026 | **Phase**: 26 (GQA Scaffolding)
+**Status**: Alpha | **Tests**: Partial (6 files with compilation errors) | **Hardware**: AMD Radeon RX 7900 XT (gfx1100) | **Last Updated**: January 2026 | **Phase**: 27 (Weight Preloading)

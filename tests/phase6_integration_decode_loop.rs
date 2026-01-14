@@ -16,10 +16,10 @@ mod decode_loop_tests {
     /// Helper: Find a test model GGUF file
     fn find_test_model() -> Option<String> {
         let possible_paths = vec![
-            "/home/feanor/Projects/ROCmForge/models/test_model.gguf",
-            "/home/feanor/models/test.gguf",
-            "/tmp/test_model.gguf",
-            "models/test.gguf",
+            "/home/feanor/Projects/ROCmForge/models/qwen2.5-0.5b.gguf",
+            "/home/feanor/Projects/ROCmForge/models/Qwen2.5-14B-Instruct-1M-q6_k_m.gguf",
+            "models/qwen2.5-0.5b.gguf",
+            "models/Qwen2.5-14B-Instruct-1M-q6_k_m.gguf",
         ];
 
         for path in possible_paths {

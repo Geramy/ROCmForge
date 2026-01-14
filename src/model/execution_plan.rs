@@ -562,16 +562,22 @@ impl ExecutionPlan {
             "word_embeddings.weight",
         ];
 
+        eprintln!(">>> map_embedding_lazy: config.hidden_size={}, config.vocab_size={}",
+            config.hidden_size, config.vocab_size);
+
         // Try to find and validate embedding tensor
         for name in &embedding_names {
             if let Some(lazy) = lazy_tensors.get(*name) {
                 if let Some(shape) = lazy.shape() {
+                    eprintln!(">>> map_embedding_lazy: Found tensor '{}' with shape {:?}", name, shape);
                     if shape.len() != 2 {
+                        eprintln!(">>> map_embedding_lazy: Skipping (not 2D)");
                         continue;
                     }
 
                     let (d0, d1) = (shape[0], shape[1]);
                     let hidden_size = config.hidden_size;
+                    eprintln!(">>> map_embedding_lazy: d0={}, d1={}, hidden_size={}", d0, d1, hidden_size);
 
                     // Determine vocab_size if unknown (== 0)
                     let actual_vocab_size = if config.vocab_size == 0 {
@@ -587,10 +593,12 @@ impl ExecutionPlan {
                     } else {
                         config.vocab_size
                     };
+                    eprintln!(">>> map_embedding_lazy: actual_vocab_size={}", actual_vocab_size);
 
                     // Check if this tensor matches expected patterns
                     // Accept: [vocab, hidden] OR [hidden, vocab]
                     if d0 == actual_vocab_size && d1 == hidden_size {
+                        eprintln!(">>> map_embedding_lazy: Match [vocab, hidden] pattern -> RowMajor");
                         tracing::info!(
                             "Found embedding tensor '{}' with shape {:?}, inferred vocab_size={}",
                             name,
@@ -601,6 +609,7 @@ impl ExecutionPlan {
                     }
 
                     if d0 == hidden_size && d1 == actual_vocab_size {
+                        eprintln!(">>> map_embedding_lazy: Match [hidden, vocab] pattern -> ColMajor");
                         tracing::info!(
                             "Found embedding tensor '{}' with shape {:?}, inferred vocab_size={}",
                             name,
@@ -913,6 +922,10 @@ impl ExecutionPlan {
         embedding_weights: &DeviceTensor,
     ) -> HipResult<EmbeddingGgmlPlan> {
         let embed_shape = embedding_weights.shape().dims();
+        eprintln!(">>> build_embedding_plan: embed_shape={:?}", embed_shape);
+        eprintln!(">>> build_embedding_plan: self.config.hidden_size={}, self.config.vocab_size={}",
+            self.config.hidden_size, self.config.vocab_size);
+
         if embed_shape.len() != 2 {
             return Err(HipError::GenericError(format!(
                 "Embedding weight shape must be 2D, got {:?}",
@@ -920,15 +933,10 @@ impl ExecutionPlan {
             )));
         }
 
-        let (n_embd, _vocab_size) = match self.embedding_layout {
-            Layout::RowMajor => (embed_shape[1], embed_shape[0]),
-            Layout::ColMajor => (embed_shape[0], embed_shape[1]),
-            Layout::Strided => {
-                return Err(HipError::GenericError(
-                    "Strided layout not supported for embeddings".to_string(),
-                ));
-            }
-        };
+        // Detect layout from actual tensor shape (not self.embedding_layout which may be stale)
+        // After transpose in embedding_weights(), the tensor is always [vocab, hidden]
+        let (n_embd, vocab_size) = (embed_shape[1], embed_shape[0]);
+        eprintln!(">>> build_embedding_plan: n_embd={}, vocab_size={}", n_embd, vocab_size);
 
         if n_embd != self.config.hidden_size {
             return Err(HipError::GenericError(format!(
@@ -951,10 +959,12 @@ impl ExecutionPlan {
             .ok_or_else(|| HipError::GenericError("Output buffer size overflow".to_string()))?;
 
         let mut graph = Graph::new();
+        // After transpose, embedding is [vocab, hidden] which is RowMajor layout
+        // Do NOT use self.embedding_layout which is for the original GGUF [hidden, vocab] format
         let weights_id = graph.add_tensor(TensorDesc::new(
             embed_shape.to_vec(),
             DType::F32,
-            self.embedding_layout,
+            Layout::RowMajor,  // Transposed format is always RowMajor [vocab, hidden]
         ));
         let tokens_id = graph.add_tensor(TensorDesc::new(
             vec![max_seq_len],
@@ -1707,9 +1717,25 @@ impl ExecutionPlan {
         let embed_shape = embedding_weights.shape().dims();
         eprintln!(">>> embedding_lookup: Got shape {:?}", embed_shape);
 
-        let plan = self.embedding_plan.get_or_try_init(|| {
-            self.build_embedding_plan(backend, embedding_weights)
-        })?;
+        eprintln!(">>> embedding_lookup: About to call get_or_try_init on embedding_plan...");
+        let plan = match self.embedding_plan.get_or_try_init(|| {
+            eprintln!(">>> embedding_lookup: Inside get_or_try_init closure, calling build_embedding_plan...");
+            let result = self.build_embedding_plan(backend, embedding_weights);
+            match &result {
+                Ok(_) => eprintln!(">>> embedding_lookup: build_embedding_plan returned Ok"),
+                Err(e) => eprintln!(">>> embedding_lookup: build_embedding_plan returned Err: {}", e),
+            }
+            result
+        }) {
+            Ok(p) => {
+                eprintln!(">>> embedding_lookup: get_or_try_init succeeded");
+                p
+            }
+            Err(e) => {
+                eprintln!(">>> embedding_lookup: get_or_try_init failed: {}", e);
+                return Err(e);
+            }
+        };
 
         if seq_len > plan.max_seq_len {
             return Err(HipError::GenericError(format!(
@@ -1726,11 +1752,8 @@ impl ExecutionPlan {
         }
 
         // Validate token IDs
-        let vocab_size = match self.embedding_layout {
-            Layout::RowMajor => embed_shape[0],
-            Layout::ColMajor => embed_shape[1],
-            Layout::Strided => embed_shape[0],
-        };
+        // After transpose, embedding is always [vocab, hidden], so vocab is embed_shape[0]
+        let vocab_size = embed_shape[0];
         for &token_id in input_tokens {
             if token_id as usize >= vocab_size {
                 return Err(HipError::GenericError(format!(
@@ -1749,13 +1772,18 @@ impl ExecutionPlan {
         );
         let mut padded_tokens = vec![0u32; plan.max_seq_len];
         padded_tokens[..seq_len].copy_from_slice(input_tokens);
+        eprintln!(">>> embedding_lookup: About to call copy_to_device...");
         backend.copy_to_device(&plan.tokens_buffer, &padded_tokens)?;
+        eprintln!(">>> embedding_lookup: copy_to_device complete");
 
+        eprintln!(">>> embedding_lookup: About to lock ggml_backend...");
         let mut ggml_backend = plan.backend.lock().map_err(|_| {
             HipError::GenericError("GetRows backend lock poisoned".to_string())
         })?;
+        eprintln!(">>> embedding_lookup: ggml_backend locked, about to execute_graph...");
         execute_graph(&mut *ggml_backend, &plan.graph)
             .map_err(|e| HipError::GenericError(format!("GetRows execute failed: {:?}", e)))?;
+        eprintln!(">>> embedding_lookup: execute_graph complete");
 
         let output_bytes = seq_len
             .checked_mul(hidden_size)

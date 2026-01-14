@@ -42,6 +42,7 @@ pub fn execute_graph_with_config<B: GgmlBackend>(
     graph: &mut Graph,
     config: ExecuteConfig,
 ) -> GgmlResult<ExecuteResult> {
+    eprintln!(">>> execute_graph_with_config: ENTRY");
     let mut optimizer_stats = None;
 
     if config.optimize {
@@ -50,21 +51,29 @@ pub fn execute_graph_with_config<B: GgmlBackend>(
     }
 
     // Allocate buffers for all tensors
+    eprintln!(">>> execute_graph_with_config: Allocating buffers for {} tensors", graph.tensors.len());
     for desc in &graph.tensors {
         if desc.is_view() {
             continue;
         }
         if backend.buffer(desc.id).is_none() {
+            eprintln!(">>> execute_graph_with_config: Allocating buffer for tensor {:?}", desc.id);
             backend.alloc(desc)?;
         }
     }
+    eprintln!(">>> execute_graph_with_config: Buffer allocation complete");
 
     // Execute each node
-    for node in &graph.nodes {
+    eprintln!(">>> execute_graph_with_config: Executing {} nodes", graph.nodes.len());
+    for (i, node) in graph.nodes.iter().enumerate() {
+        eprintln!(">>> execute_graph_with_config: Executing node {} (op={:?})", i, node.op);
         backend.execute_op(&node.op, &node.inputs, &node.outputs)?;
+        eprintln!(">>> execute_graph_with_config: Node {} complete", i);
     }
+    eprintln!(">>> execute_graph_with_config: All nodes executed, about to synchronize...");
 
     backend.synchronize()?;
+    eprintln!(">>> execute_graph_with_config: Synchronization complete");
 
     Ok(ExecuteResult { optimizer_stats })
 }

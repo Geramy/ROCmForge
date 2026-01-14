@@ -764,10 +764,13 @@ impl GgufLoader {
                 .gpu_cache
                 .read()
                 .map_err(|e| anyhow!("GPU cache read lock poisoned: {}", e))?;
+            eprintln!(">>> load_tensor_to_gpu: GPU cache has {} tensors, looking for '{}'", cache.len(), name);
             if let Some(cached) = cache.get(name) {
                 tracing::debug!("GPU cache hit for tensor '{}'", name);
+                eprintln!(">>> load_tensor_to_gpu: GPU cache HIT for '{}'", name);
                 return Ok(cached.clone());
             }
+            eprintln!(">>> load_tensor_to_gpu: GPU cache MISS for '{}'", name);
         }
 
         tracing::debug!("GPU cache miss for tensor '{}', loading from mmap", name);
@@ -1270,6 +1273,11 @@ impl GgufLoader {
         for (name, tensor) in buffers.iter() {
             cache.insert(name.clone(), tensor.clone());
         }
+
+        // Debug: Log cache size after preload
+        let cache_size = cache.len();
+        tracing::info!("load_to_gpu_async: GPU cache now has {} tensors", cache_size);
+        eprintln!(">>> load_to_gpu_async: GPU cache now has {} tensors", cache_size);
 
         // Convert Arc<DeviceTensor> to DeviceTensor for backward compatibility
         let result: HashMap<String, DeviceTensor> = buffers
