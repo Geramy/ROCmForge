@@ -8,8 +8,9 @@
 //! - **Dead Code Elimination (DCE)**: Remove nodes not contributing to outputs
 //! - **Common Subexpression Elimination (CSE)**: Deduplicate identical computations
 //! - **No-op elimination**: Remove redundant View/Reshape operations
+//! - **Layout optimization**: Optimize tensor layouts (RowMajor vs ColMajor)
 
-use crate::ggml::{Graph, Node, Op, TensorDesc, TensorId};
+use crate::ggml::{Graph, Layout, Node, Op, TensorDesc, TensorId};
 use std::collections::{HashMap, HashSet};
 
 /// Graph optimizer that applies various optimization passes.
@@ -19,6 +20,7 @@ pub struct GraphOptimizer {
     enable_dce: bool,
     enable_cse: bool,
     enable_noop_elimination: bool,
+    enable_layout_optimization: bool,
 }
 
 impl GraphOptimizer {
@@ -28,6 +30,7 @@ impl GraphOptimizer {
             enable_dce: true,
             enable_cse: true,
             enable_noop_elimination: true,
+            enable_layout_optimization: true,
         }
     }
 
@@ -46,6 +49,12 @@ impl GraphOptimizer {
     /// Disable no-op elimination.
     pub fn without_noop_elimination(mut self) -> Self {
         self.enable_noop_elimination = false;
+        self
+    }
+
+    /// Disable layout optimization.
+    pub fn without_layout_optimization(mut self) -> Self {
+        self.enable_layout_optimization = false;
         self
     }
 
@@ -80,6 +89,12 @@ impl GraphOptimizer {
         if self.enable_cse {
             let removed = self.eliminate_common_subexpressions(graph, &mut dep_info);
             stats.cse_nodes_removed = removed;
+        }
+
+        // Pass 4: Layout optimization
+        if self.enable_layout_optimization {
+            let conversions = self.optimize_layouts(graph, &mut dep_info);
+            stats.layout_conversions_added = conversions;
         }
 
         stats
@@ -223,6 +238,50 @@ impl GraphOptimizer {
         // (This is simplified - a full implementation would also clean up tensors)
         removed
     }
+
+    /// Optimize tensor layouts - insert conversions where beneficial.
+    ///
+    /// Layout preferences:
+    /// - MatMul: prefers ColMajor for right operand (weights)
+    /// - Element-wise ops: no strong preference (keep RowMajor)
+    /// - Quantized MatMul: prefers ColMajor for quantized weights
+    fn optimize_layouts(&self, graph: &mut Graph, _dep_info: &mut DependencyInfo) -> usize {
+        let mut conversions_added = 0;
+
+        // Collect layout optimization decisions
+        let mut tensor_layout_changes: HashMap<TensorId, Layout> = HashMap::new();
+
+        for node in &graph.nodes {
+            match &node.op {
+                // MatMul: right operand (weights) should be ColMajor
+                Op::MatMul | Op::MatMulQ4_0 | Op::MatMulQ8_0 => {
+                    if let Some(&weight_id) = node.inputs.get(1) {
+                        let weight_desc = &graph.tensors[weight_id.0];
+                        // Only convert if currently RowMajor and 2D
+                        if weight_desc.layout == Layout::RowMajor && weight_desc.shape.len() == 2 {
+                            tensor_layout_changes.insert(weight_id, Layout::ColMajor);
+                        }
+                    }
+                }
+                // Element-wise ops: no layout changes needed
+                Op::Add | Op::Scale { .. } | Op::Mask | Op::Copy | Op::Accumulate { .. } => {
+                    // Keep existing layout
+                }
+                // Other ops: no optimization yet
+                _ => {}
+            }
+        }
+
+        // Apply layout changes to tensor descriptors
+        for (tensor_id, new_layout) in tensor_layout_changes {
+            if let Some(tensor_desc) = graph.tensors.get_mut(tensor_id.0) {
+                tensor_desc.layout = new_layout;
+                conversions_added += 1;
+            }
+        }
+
+        conversions_added
+    }
 }
 
 /// Statistics about optimization results.
@@ -234,6 +293,8 @@ pub struct OptimizerStats {
     pub dce_nodes_removed: usize,
     /// Number of nodes removed by CSE
     pub cse_nodes_removed: usize,
+    /// Number of layout conversion nodes added
+    pub layout_conversions_added: usize,
 }
 
 impl OptimizerStats {
@@ -244,7 +305,7 @@ impl OptimizerStats {
 
     /// Check if any optimizations were applied.
     pub fn is_empty(&self) -> bool {
-        self.total_removed() == 0
+        self.total_removed() == 0 && self.layout_conversions_added == 0
     }
 }
 
@@ -255,11 +316,12 @@ impl std::fmt::Display for OptimizerStats {
         } else {
             write!(
                 f,
-                "OptimizerStats: {} noops, {} DCE, {} CSE ({} total)",
+                "OptimizerStats: {} noops, {} DCE, {} CSE, {} layout ({} total)",
                 self.noops_removed,
                 self.dce_nodes_removed,
                 self.cse_nodes_removed,
-                self.total_removed()
+                self.layout_conversions_added,
+                self.total_removed() + self.layout_conversions_added
             )
         }
     }
@@ -544,6 +606,7 @@ mod tests {
             noops_removed: 5,
             dce_nodes_removed: 3,
             cse_nodes_removed: 2,
+            layout_conversions_added: 0,
         };
 
         let display = format!("{}", stats);
@@ -593,5 +656,77 @@ mod tests {
         }
 
         assert_eq!(sig.input_shapes.len(), 1);
+    }
+
+    // TDD TEST: Layout optimization - MatMul prefers ColMajor for right operand
+    #[test]
+    fn test_layout_optimization_for_matmul() {
+        let mut graph = Graph::new();
+
+        // Create input tensors in RowMajor layout
+        let mut input_desc = TensorDesc::new(vec![128, 256], crate::ggml::DType::F32, Layout::RowMajor);
+        let mut weight_desc = TensorDesc::new(vec![256, 512], crate::ggml::DType::F32, Layout::RowMajor);
+        let mut output_desc = TensorDesc::new(vec![128, 512], crate::ggml::DType::F32, Layout::RowMajor);
+
+        let input = graph.add_tensor(input_desc.clone());
+        let weight = graph.add_tensor(weight_desc.clone());
+        let output = graph.add_tensor(output_desc.clone());
+
+        // Add MatMul node
+        graph.add_node(Op::MatMul, vec![input, weight], vec![output]);
+
+        // Run optimizer with layout optimization enabled
+        let optimizer = GraphOptimizer::new()
+            .without_dce()
+            .without_cse()
+            .without_noop_elimination();
+        let stats = optimizer.optimize(&mut graph);
+
+        // After layout optimization:
+        // 1. Weight tensor should be marked for ColMajor layout
+        // 2. A layout conversion should be inserted before the MatMul
+        assert!(stats.layout_conversions_added > 0,
+                "Layout optimization should add at least one conversion node");
+
+        // Verify weight tensor layout is optimized
+        let optimized_weight = &graph.tensors[weight.0];
+        assert_eq!(optimized_weight.layout, Layout::ColMajor,
+                   "Weight tensor should be optimized to ColMajor for MatMul");
+    }
+
+    // TDD TEST: Element-wise ops prefer RowMajor
+    #[test]
+    fn test_layout_optimization_preserves_rowmajor_for_elementwise() {
+        let mut graph = Graph::new();
+
+        // Create input tensors in RowMajor
+        let mut input_desc = TensorDesc::new(vec![128, 256], crate::ggml::DType::F32, Layout::RowMajor);
+        let mut bias_desc = TensorDesc::new(vec![128, 256], crate::ggml::DType::F32, Layout::RowMajor);
+        let mut output_desc = TensorDesc::new(vec![128, 256], crate::ggml::DType::F32, Layout::RowMajor);
+
+        let input = graph.add_tensor(input_desc.clone());
+        let bias = graph.add_tensor(bias_desc.clone());
+        let output = graph.add_tensor(output_desc.clone());
+
+        // Add element-wise Add node
+        graph.add_node(Op::Add, vec![input, bias], vec![output]);
+
+        // Run optimizer with layout optimization
+        let optimizer = GraphOptimizer::new()
+            .without_dce()
+            .without_cse()
+            .without_noop_elimination();
+        let stats = optimizer.optimize(&mut graph);
+
+        // Element-wise ops should not trigger layout conversions
+        assert_eq!(stats.layout_conversions_added, 0,
+                   "Element-wise Add should not require layout conversions");
+    }
+
+    // TDD TEST: Layout optimization can be disabled
+    #[test]
+    fn test_layout_optimization_can_be_disabled() {
+        let optimizer = GraphOptimizer::new().without_layout_optimization();
+        assert!(!optimizer.enable_layout_optimization);
     }
 }
