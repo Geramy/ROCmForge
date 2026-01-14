@@ -4,18 +4,23 @@ pub mod buffer;
 pub mod ops;
 
 use crate::backend::HipBackend;
-use crate::ggml::{GgmlBackend, GgmlError, GgmlResult, Op, TensorDesc, TensorId};
+use crate::ggml::{allocator::TensorAllocator, GgmlBackend, GgmlError, GgmlResult, Op, TensorDesc, TensorId};
 use std::collections::HashMap;
 use std::sync::Arc;
 
 pub struct HipGgmlBackend {
     backend: Arc<HipBackend>,
     tensors: HashMap<TensorId, (TensorDesc, crate::backend::HipBuffer)>,
+    /// Optional tensor allocator for buffer reuse
+    allocator: Option<TensorAllocator>,
 }
 
 impl std::fmt::Debug for HipGgmlBackend {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("HipGgmlBackend").finish()
+        f.debug_struct("HipGgmlBackend")
+            .field("tensor_count", &self.tensors.len())
+            .field("allocator_enabled", &self.allocator.is_some())
+            .finish()
     }
 }
 
@@ -24,6 +29,37 @@ impl HipGgmlBackend {
         Self {
             backend,
             tensors: HashMap::new(),
+            allocator: None,
+        }
+    }
+
+    /// Enable the tensor allocator for buffer reuse.
+    pub fn with_allocator(mut self) -> Self {
+        self.allocator = Some(TensorAllocator::new());
+        self
+    }
+
+    /// Enable the tensor allocator with custom max pool size.
+    pub fn with_allocator_config(mut self, max_pool_size: usize) -> Self {
+        self.allocator = Some(TensorAllocator::new().with_max_pool_size(max_pool_size));
+        self
+    }
+
+    /// Check if the allocator is enabled.
+    pub fn has_allocator(&self) -> bool {
+        self.allocator.is_some()
+    }
+
+    /// Get allocator statistics.
+    pub fn allocator_stats(&self) -> Option<crate::ggml::allocator::AllocatorStats> {
+        self.allocator.as_ref().map(|a| a.stats())
+    }
+
+    /// Reset the allocator, clearing all free pools.
+    /// Call this between graph executions for optimal reuse.
+    pub fn reset_allocator(&mut self) {
+        if let Some(alloc) = &mut self.allocator {
+            alloc.reset();
         }
     }
 }
@@ -33,10 +69,21 @@ impl GgmlBackend for HipGgmlBackend {
 
     fn alloc(&mut self, desc: &TensorDesc) -> GgmlResult<()> {
         let bytes = desc.byte_size();
-        let buffer = self
-            .backend
-            .allocate_buffer(bytes)
-            .map_err(|e| GgmlError::Backend(e.to_string()))?;
+
+        // Try to allocate from pool if allocator is enabled
+        let buffer = if let Some(alloc) = &mut self.allocator {
+            alloc.allocate(bytes, |size| {
+                self.backend
+                    .allocate_buffer(size)
+                    .map_err(|e| e.to_string())
+            })
+            .map_err(|e| GgmlError::Backend(e))?
+        } else {
+            self.backend
+                .allocate_buffer(bytes)
+                .map_err(|e| GgmlError::Backend(e.to_string()))?
+        };
+
         self.tensors.insert(desc.id, (desc.clone(), buffer));
         Ok(())
     }
@@ -47,7 +94,13 @@ impl GgmlBackend for HipGgmlBackend {
     }
 
     fn free(&mut self, id: TensorId) -> GgmlResult<()> {
-        self.tensors.remove(&id);
+        if let Some((desc, buffer)) = self.tensors.remove(&id) {
+            // Return buffer to allocator if enabled
+            if let Some(alloc) = &mut self.allocator {
+                alloc.free(buffer, desc.byte_size());
+            }
+            // Otherwise buffer is dropped (deallocated)
+        }
         Ok(())
     }
 

@@ -73,27 +73,11 @@ Future optimization: Implement HIP kernels for on-device dequantization during m
 
 ### Phase 5: Complete Missing ggml Ops 🔄 IN PROGRESS
 
-**Summary**: Adding Accumulate op for efficient KV cache writes without Copy overhead.
+**Summary**: Adding Accumulate op and Tensor allocator for efficient buffer reuse.
 
 #### Completed (2026-01-14)
 
-Added `Accumulate { offset: usize }` operation to the ggml IR for in-place KV cache updates:
-
-1. **Op enum extension** (`src/ggml/op.rs`):
-   - `Accumulate { offset: usize }` - In-place tensor accumulation
-
-2. **Accumulate implementation** (`src/ggml/hip_backend/ops/accumulate.rs`):
-   - `accumulate()` - Downloads src/dst from GPU, performs element-wise addition, uploads back
-   - Operation: `dst[offset:offset+src_size] += src`
-   - Returns accumulated values to output buffer
-   - Updates dst buffer in-place
-
-3. **Execute handler** (`src/ggml/hip_backend/mod.rs`):
-   - Match arm for `Op::Accumulate { offset }` (lines 1145-1203)
-   - Validates 2 inputs, 1 output
-   - Checks buffer sizes for offset bounds
-
-#### Files Created/Modified
+**1. Accumulate Op** - In-place KV cache updates:
 
 | File | Changes |
 |------|---------|
@@ -102,24 +86,41 @@ Added `Accumulate { offset: usize }` operation to the ggml IR for in-place KV ca
 | `src/ggml/hip_backend/ops/mod.rs` | Added `accumulate` module |
 | `src/ggml/hip_backend/mod.rs` | Added `Op::Accumulate` handler |
 
-#### Known Limitations
+**2. Tensor Allocator** - Buffer pooling inspired by llama.cpp's ggml_allocr:
 
-Current implementation uses CPU-side computation:
-1. GPU → Host copy of src/dst buffers
-2. CPU-side element-wise addition
-3. Host → GPU copy of result and updated dst
+| File | Changes |
+|------|---------|
+| `src/ggml/allocator.rs` | **NEW**: TensorAllocator with size-pooled free blocks + 4 unit tests |
+| `src/ggml/mod.rs` | Added `allocator` module |
+| `src/ggml/hip_backend/mod.rs` | Integrated allocator: `with_allocator()`, `reset_allocator()`, `allocator_stats()` |
 
-Future optimization: Implement HIP kernel for on-device accumulation.
+**Allocator Strategy:**
+- Free buffers grouped by exact size (`HashMap<usize, Vec<FreeBlock>>`)
+- `allocate(size, fn)` - Tries pool first, falls back to GPU allocation
+- `free(buffer, size)` - Returns buffer to pool for reuse
+- `reset()` - Clears all pools for fresh execution
+- Max 16 buffers per size (configurable)
+- Statistics: allocated, reused, pooled counts
+
+**Known Limitations:**
+
+Accumulate:
+- CPU-side computation (GPU → Host → add → Host → GPU)
+- TODO: HIP kernel for on-device accumulation
+
+Allocator:
+- Exact-size matching only (no best-fit with splits)
+- TODO: Measure real-world impact on inference workload
 
 #### Remaining Work
 
-- Tensor allocator for buffer reuse (llama.cpp's `ggml_allocr`)
 - Graph optimizer (CSE, DCE, layout optimization)
 
 #### Results
 
 - ✅ Accumulate operation implemented
-- ✅ All 206 lib tests pass (203 + 3 new accumulate tests)
+- ✅ Tensor allocator implemented
+- ✅ All 210 lib tests pass (203 + 3 accumulate + 4 allocator)
 
 ---
 

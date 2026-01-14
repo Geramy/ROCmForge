@@ -12,15 +12,20 @@ Phase 5: Complete Missing ggml Ops 🔄 IN PROGRESS
 ### Phase 5: Complete Missing ggml Ops (2026-01-14) 🔄
 
 **Completed:**
-- Added `Accumulate { offset: usize }` op for efficient KV cache writes
+- Accumulate op for efficient KV cache writes
   - `src/ggml/op.rs` - Added to Op enum
   - `src/ggml/hip_backend/ops/accumulate.rs` - CPU-side implementation
   - `src/ggml/hip_backend/mod.rs` - execute_op handler (lines 1145-1203)
-  - 3 unit tests, all 206 tests passing
+  - 3 unit tests
+
+- Tensor allocator for buffer reuse
+  - `src/ggml/allocator.rs` - TensorAllocator with size-pooled free blocks
+  - `src/ggml/hip_backend/mod.rs` - Integrated with `with_allocator()`, `reset_allocator()`, `allocator_stats()`
+  - 4 unit tests
 
 **Remaining:**
-- Tensor allocator for buffer reuse
 - Graph optimizer (CSE, DCE, layout optimization)
+- Real-world performance measurement of allocator impact
 
 ## Completed Work
 

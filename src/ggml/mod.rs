@@ -1,5 +1,6 @@
 //! ggml-style IR and backend contracts.
 
+pub mod allocator;
 pub mod backend;
 pub mod cpu_backend;
 pub mod executor;
