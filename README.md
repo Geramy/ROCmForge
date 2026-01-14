@@ -2,7 +2,7 @@
 
 **AMD GPU Inference Engine for Large Language Models**
 
-A high-performance inference engine specifically designed for AMD GPUs using ROCm and HIP. ROCmForge provides efficient LLM inference capabilities on AMD hardware with fully-tested GPU kernels.
+A high-performance inference engine specifically designed for AMD GPUs using ROCm and HIP. ROCmForge provides LLM inference capabilities on AMD hardware with GPU-accelerated kernels.
 
 ## Project Status
 
@@ -130,9 +130,7 @@ Phase 5: OCP MX Specification v1.0 compliant MXFP4/MXFP6
    - Fix: Would require API breaking change
    - Impact: Low (stats methods only)
 
-## What's In Progress
-
-### Future Enhancements (Planned)
+## Planned Work
 
 1. **CLI End-to-End Testing**: Test CLI with real models after Phase 21 fixes
 2. **Integration Testing**: End-to-end tests with real models
@@ -170,7 +168,7 @@ src/
 
 ```bash
 # Clone repository
-git clone https://github.com/your-repo/ROCmForge.git
+git clone https://github.com/oldnordic/ROCmForge.git
 cd ROCmForge
 
 # Build release binary
@@ -207,7 +205,7 @@ watch -n 1 rocm-smi
 
 # Generate text (experimental - fixes applied but not fully tested)
 ./target/release/rocmforge_cli generate \
-  --gguf ~/.config/syncore/models/qwen2.5-0.5b.gguf \
+  --gguf /path/to/your/model.gguf \
   --prompt "The future of AI is" \
   --max-tokens 20 \
   --temperature 0.7
@@ -234,6 +232,8 @@ curl -X POST http://localhost:8080/v1/completions \
 
 ## Roadmap
 
+**Note**: Phase numbers do not reflect completion order. Some later phases are marked complete while earlier phases (e.g., Phase 6, 8) are still pending.
+
 | Phase | Description | Status | Notes |
 |-------|-------------|--------|-------|
 | Phase 1 | Basic kernels (scale, mask, softmax) | ✅ Complete | - |
@@ -243,22 +243,22 @@ curl -X POST http://localhost:8080/v1/completions \
 | Phase 4.5 | GGUF Loader Fixes | ✅ Complete | - |
 | Phase 4.6 | Qwen2 Tensor Mapping | ✅ Complete | - |
 | Phase 5 | MXFP Quantization (MXFP4/MXFP6) | ✅ Complete | OCP MX Spec v1.0 |
-| Phase 7 | GPU Attention Path | ✅ Complete | - |
-| Phase 10 | Memory Pooling (ROCm workaround) | ✅ Complete | - |
-| Phase 11 | P0/P1 Bug Fixes | ✅ Complete | - |
-| Phase 15 | P1/P2 Code Quality Fixes | ✅ Complete | Logging, naming cleanup |
-| Phase 17 | Async GPU Loading | ✅ Complete | Multi-stream uploads |
-| Phase 20 | GPU Testing Safety | ✅ Complete | - |
-| Phase 21 | CLI Stability Fixes | ✅ Complete | Untested end-to-end |
-| Phase 26 | GQA Support Scaffolding | ⚠️ Incomplete | Has compilation errors |
 | Phase 6 | GPU Sampler (top-k/top-p on device) | ❌ Pending | - |
+| Phase 7 | GPU Attention Path | ✅ Complete | - |
 | Phase 8 | Q4_1/Q5_0/Q5_1 Support | ❌ Not Verified | Claims unverified |
 | Phase 9 | Code Quality (100% test health) | ❌ False Claim | 6 test files have errors |
+| Phase 10 | Memory Pooling (ROCm workaround) | ✅ Complete | - |
+| Phase 11 | P0/P1 Bug Fixes | ✅ Complete | - |
 | Phase 12-14 | - | ⚪ Skipped | Not documented |
+| Phase 15 | P1/P2 Code Quality Fixes | ✅ Complete | Logging, naming cleanup |
 | Phase 16 | - | ⚪ Skipped | Not documented |
+| Phase 17 | Async GPU Loading | ✅ Complete | Multi-stream uploads |
 | Phase 18 | Lazy ExecutionPlan | ⚠️ Claimed | "12x speedup" unverified |
 | Phase 19 | - | ⚪ Skipped | Not documented |
+| Phase 20 | GPU Testing Safety | ✅ Complete | - |
+| Phase 21 | CLI Stability Fixes | ✅ Complete | Untested end-to-end |
 | Phase 22-25 | - | ⚪ Skipped | Not documented |
+| Phase 26 | GQA Support Scaffolding | ⚠️ Incomplete | Has compilation errors |
 | Future | End-to-End Integration Tests | ❌ Planned | Critical gap |
 | Future | FP16 Compute Support | ❌ Planned | - |
 
@@ -267,12 +267,12 @@ curl -X POST http://localhost:8080/v1/completions \
 **High Priority:**
 - [ ] Fix 6 test files with compilation errors
 - [ ] End-to-end integration tests with real models
-- [ ] Remove unverified performance claims ("12x speedup", etc.)
+- [ ] Complete Phase 26 (GQA Support) - fix compilation errors
 
 **Medium Priority:**
 - [ ] Test CLI end-to-end with real models
 - [ ] GPU-based MXFP dequantization kernels
-- [ ] Verify or remove Phase 18 (Lazy ExecutionPlan) claims
+- [ ] Phase 6: GPU Sampler (top-k/top-p on device)
 
 **Low Priority:**
 - [ ] Multi-GPU tensor parallelism
