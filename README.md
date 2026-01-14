@@ -259,7 +259,7 @@ curl -X POST http://localhost:8080/v1/completions \
 | Phase 4.6 | Qwen2 Tensor Mapping | ✅ Complete | - |
 | Phase 5 | MXFP Quantization (MXFP4/MXFP6) | ✅ Complete | OCP MX Spec v1.0 |
 | Phase 6 | GPU Sampler (top-k/top-p on device) | ❌ Pending | - |
-| Phase 7 | GPU Attention Path | ✅ Complete | - |
+| Phase 7 | GPU Attention Path | ⚠️ Claimed | Individual kernels work, but end-to-end inference hangs |
 | Phase 8 | Q4_1/Q5_0/Q5_1 Support | ❌ Not Verified | Claims unverified |
 | Phase 9 | Code Quality (100% test health) | ❌ False Claim | 6 test files have errors |
 | Phase 10 | Memory Pooling (ROCm workaround) | ✅ Complete | - |
@@ -271,7 +271,7 @@ curl -X POST http://localhost:8080/v1/completions \
 | Phase 18 | Lazy ExecutionPlan | ⚠️ Claimed | "12x speedup" unverified |
 | Phase 19 | - | ⚪ Skipped | Not documented |
 | Phase 20 | GPU Testing Safety | ✅ Complete | - |
-| Phase 21 | CLI Stability Fixes | ✅ Complete | Untested end-to-end |
+| Phase 21 | CLI Stability Fixes | ⚠️ Partial | Fixes applied, untested end-to-end, generate broken |
 | Phase 22-25 | - | ⚪ Skipped | Not documented |
 | Phase 26 | GQA Support Scaffolding | ⚠️ Incomplete | Has compilation errors |
 | Phase 27 | Weight Preloading | ⚠️ Partial | Loading works, inference hangs |
