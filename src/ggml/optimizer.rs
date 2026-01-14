@@ -213,17 +213,18 @@ impl GraphOptimizer {
     fn eliminate_common_subexpressions(&self, graph: &mut Graph, dep_info: &mut DependencyInfo) -> usize {
         let mut removed = 0;
         let mut canonical_map: HashMap<NodeSignature, TensorId> = HashMap::new();
+        let mut nodes_to_remove: HashSet<usize> = HashSet::new();
 
         // Build a map of operation signatures to their output tensors
-        for node in &graph.nodes {
+        for (idx, node) in graph.nodes.iter().enumerate() {
             let sig = NodeSignature::from_node(node, graph);
 
             if let Some(&existing_output) = canonical_map.get(&sig) {
                 // Found a duplicate computation!
-                // Replace all uses of this node's output with the existing output
-                if let Some(new_output) = node.outputs.first() {
-                    // Update all references from new_output to existing_output
-                    dep_info.remap_tensor(*new_output, existing_output);
+                if let Some(duplicate_output) = node.outputs.first() {
+                    // Update all references from duplicate_output to existing_output
+                    dep_info.remap_tensor(*duplicate_output, existing_output);
+                    nodes_to_remove.insert(idx);
                     removed += 1;
                 }
             } else {
@@ -234,8 +235,79 @@ impl GraphOptimizer {
             }
         }
 
-        // Remove nodes whose outputs were remapped
-        // (This is simplified - a full implementation would also clean up tensors)
+        // Update tensor references in all nodes to use remapped tensors
+        for node in &mut graph.nodes {
+            for tid in &mut node.inputs {
+                if let Some(&remapped) = dep_info.remap.get(tid) {
+                    *tid = remapped;
+                }
+            }
+            for tid in &mut node.outputs {
+                if let Some(&remapped) = dep_info.remap.get(tid) {
+                    *tid = remapped;
+                }
+            }
+        }
+
+        // Remove duplicate nodes (in reverse order to maintain indices)
+        let mut nodes_to_remove: Vec<_> = nodes_to_remove.iter().copied().collect();
+        nodes_to_remove.sort_unstable_by(|a, b| b.cmp(a)); // Reverse sort
+        for idx in nodes_to_remove {
+            if idx < graph.nodes.len() {
+                graph.nodes.remove(idx);
+            }
+        }
+
+        // Clean up orphaned tensors (tensors not referenced by any remaining node)
+        let mut referenced_tensors: HashSet<TensorId> = HashSet::new();
+        for node in &graph.nodes {
+            for &tid in &node.inputs {
+                referenced_tensors.insert(tid);
+            }
+            for &tid in &node.outputs {
+                referenced_tensors.insert(tid);
+            }
+        }
+
+        // Build old-to-new tensor ID mapping after cleanup
+        let mut old_to_new: HashMap<TensorId, TensorId> = HashMap::new();
+        let mut new_idx = 0;
+
+        // Keep only referenced tensors
+        let original_tensor_count = graph.tensors.len();
+        graph.tensors = graph
+            .tensors
+            .iter()
+            .filter(|desc| {
+                let keep = referenced_tensors.contains(&desc.id);
+                if keep {
+                    old_to_new.insert(desc.id, TensorId(new_idx));
+                    new_idx += 1;
+                }
+                keep
+            })
+            .map(|desc| desc.clone())
+            .collect();
+
+        // Update tensor IDs
+        for (new_id, tensor) in graph.tensors.iter_mut().enumerate() {
+            tensor.id = TensorId(new_id);
+        }
+
+        // Update node references to new tensor IDs
+        for node in &mut graph.nodes {
+            for tid in &mut node.inputs {
+                if let Some(&new_id) = old_to_new.get(tid) {
+                    *tid = new_id;
+                }
+            }
+            for tid in &mut node.outputs {
+                if let Some(&new_id) = old_to_new.get(tid) {
+                    *tid = new_id;
+                }
+            }
+        }
+
         removed
     }
 
@@ -728,5 +800,64 @@ mod tests {
     fn test_layout_optimization_can_be_disabled() {
         let optimizer = GraphOptimizer::new().without_layout_optimization();
         assert!(!optimizer.enable_layout_optimization);
+    }
+
+    // TDD TEST: CSE removes duplicate computation nodes
+    #[test]
+    fn test_cse_removes_duplicate_nodes() {
+        let mut graph = Graph::new();
+
+        // Create two identical Add operations
+        let input = graph.add_tensor(make_tensor_desc(vec![10]));
+        let bias = graph.add_tensor(make_tensor_desc(vec![10]));
+        let output1 = graph.add_tensor(make_tensor_desc(vec![10]));
+        let output2 = graph.add_tensor(make_tensor_desc(vec![10]));
+
+        // Two identical Add nodes with same inputs
+        graph.add_node(Op::Add, vec![input, bias], vec![output1]);
+        graph.add_node(Op::Add, vec![input, bias], vec![output2]);
+
+        assert_eq!(graph.nodes.len(), 2, "Should start with 2 nodes");
+
+        // Run CSE
+        let optimizer = GraphOptimizer::new()
+            .without_dce()
+            .without_noop_elimination()
+            .without_layout_optimization();
+        let stats = optimizer.optimize(&mut graph);
+
+        // CSE should detect and remove one duplicate node
+        assert_eq!(stats.cse_nodes_removed, 1, "CSE should remove 1 duplicate node");
+        assert_eq!(graph.nodes.len(), 1, "Only 1 node should remain after CSE");
+    }
+
+    // TDD TEST: CSE cleans up orphaned tensor descriptors
+    #[test]
+    fn test_cse_cleans_up_orphaned_tensors() {
+        let mut graph = Graph::new();
+
+        let input = graph.add_tensor(make_tensor_desc(vec![10]));
+        let bias = graph.add_tensor(make_tensor_desc(vec![10]));
+        let output1 = graph.add_tensor(make_tensor_desc(vec![10]));
+        let output2 = graph.add_tensor(make_tensor_desc(vec![10]));
+
+        // Two identical Add nodes
+        graph.add_node(Op::Add, vec![input, bias], vec![output1]);
+        graph.add_node(Op::Add, vec![input, bias], vec![output2]);
+
+        let initial_tensor_count = graph.tensors.len();
+
+        // Run CSE
+        let optimizer = GraphOptimizer::new()
+            .without_dce()
+            .without_noop_elimination()
+            .without_layout_optimization();
+        optimizer.optimize(&mut graph);
+
+        // After CSE, orphaned tensors should be removed
+        assert!(
+            graph.tensors.len() < initial_tensor_count,
+            "CSE should clean up orphaned tensor descriptors"
+        );
     }
 }
