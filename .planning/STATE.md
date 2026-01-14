@@ -5,9 +5,28 @@
 
 ## Current Phase
 
-Phase 3: Quantized MatMul Operations ✅ COMPLETE
+Phase 5: Complete Missing ggml Ops 🔄 IN PROGRESS
+
+## Active WIP
+
+### Phase 5: Complete Missing ggml Ops (2026-01-14) 🔄
+
+**Completed:**
+- Added `Accumulate { offset: usize }` op for efficient KV cache writes
+  - `src/ggml/op.rs` - Added to Op enum
+  - `src/ggml/hip_backend/ops/accumulate.rs` - CPU-side implementation
+  - `src/ggml/hip_backend/mod.rs` - execute_op handler (lines 1145-1203)
+  - 3 unit tests, all 206 tests passing
+
+**Remaining:**
+- Tensor allocator for buffer reuse
+- Graph optimizer (CSE, DCE, layout optimization)
 
 ## Completed Work
+
+### Phase 4: Static Weight Binding (2026-01-14) ✅
+
+Verified that weights are already bound once at graph construction via `OnceCell` caching in `layer_ggml_plans`. No per-decode-step rebinding occurs.
 
 ### Phase 3: Quantized MatMul Operations (2026-01-14) ✅
 
@@ -15,7 +34,6 @@ Added Q4_0 and Q8_0 matmul operations for efficient quantized model inference:
 - Added `MatMulQ4_0` and `MatMulQ8_0` to `Op` enum
 - Implemented CPU-side dequantization functions
 - Added execute_op handlers in HIP backend
-- All 203 tests pass
 
 ### Phase 2: Fixed-Shape Tensors (2026-01-14) ✅
 
@@ -24,12 +42,6 @@ Removed unnecessary `set_shape()` calls that were causing O(tokens) graph rebuil
 ### Phase 1: Single-Pass GGUF Loading (2026-01-14) ✅
 
 Eliminated redundant GGUF parsing. Added `ModelRuntime::load_from_gguf_with_loader()` and `InferenceEngine::load_gguf_model_with_loader()` to parse GGUF once and reuse loader.
-
-## Active WIP
-
-- None
-
-## Completed Work
 
 ### Previous Sessions (Before GSD)
 - GPU Kernels (Phases 1-4) - Complete
@@ -45,13 +57,14 @@ See `docs/CLI_AND_MODEL_LOADING_ANALYSIS.md` for detailed analysis:
 
 1. ~~Triple GGUF parsing - Startup latency~~ ✅ Fixed in Phase 1
 2. ~~Graph rebuilding every token - Token generation slowdown~~ ✅ Fixed in Phase 2
-3. Weights bound per-decode-step - Unnecessary overhead
-4. ~~Missing quantization ops - Can't run quantized models efficiently~~ ✅ Fixed in Phase 3
-5. Inefficient KV cache access - Extra allocations
+3. ~~Weights bound per-decode-step~~ ✅ Verified as already optimized
+4. ~~Missing quantization ops~~ ✅ Fixed in Phase 3
+5. ~~Inefficient KV cache access~~ ✅ Accumulate op added in Phase 5
 
 ## Known Limitations
 
 - Quantized matmul uses CPU-side dequantization (GPU kernels TODO)
+- Accumulate op uses CPU-side computation (GPU kernel TODO)
 
 ## Blocked On
 

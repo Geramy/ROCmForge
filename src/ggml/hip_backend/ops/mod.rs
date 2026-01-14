@@ -1,5 +1,6 @@
 //! HIP backend ops for ggml IR.
 
+pub mod accumulate;
 pub mod add_scale;
 pub mod copy;
 pub mod get_rows;

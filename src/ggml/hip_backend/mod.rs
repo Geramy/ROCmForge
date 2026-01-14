@@ -1142,6 +1142,65 @@ impl GgmlBackend for HipGgmlBackend {
                 )
                 .map_err(|e| GgmlError::Backend(e.to_string()))
             }
+            Op::Accumulate { offset } => {
+                // PHASE 5: Accumulate op for efficient KV cache writes
+                let inputs = _inputs;
+                let outputs = _outputs;
+                if inputs.len() != 2 || outputs.len() != 1 {
+                    return Err(GgmlError::InvalidShape(
+                        "Accumulate expects 2 inputs and 1 output".to_string(),
+                    ));
+                }
+
+                let src_desc = self
+                    .tensor_desc(inputs[0])
+                    .ok_or_else(|| GgmlError::InvalidShape("Missing src desc".to_string()))?;
+                let dst_desc = self
+                    .tensor_desc(inputs[1])
+                    .ok_or_else(|| GgmlError::InvalidShape("Missing dst desc".to_string()))?;
+                let output_desc = self
+                    .tensor_desc(outputs[0])
+                    .ok_or_else(|| GgmlError::InvalidShape("Missing output desc".to_string()))?;
+
+                // Validate shapes: src and output should match
+                if src_desc.shape != output_desc.shape {
+                    return Err(GgmlError::InvalidShape(
+                        "Accumulate src shape must match output shape".to_string(),
+                    ));
+                }
+
+                // Validate dst size: dst must be large enough to hold src at offset
+                let src_elements = src_desc.element_count();
+                let dst_elements = dst_desc.element_count();
+                let byte_offset = offset * std::mem::size_of::<f32>();
+                if byte_offset + src_desc.byte_size() > dst_desc.byte_size() {
+                    return Err(GgmlError::InvalidShape(format!(
+                        "Accumulate offset {} exceeds dst size (src={}, dst={})",
+                        offset, src_desc.byte_size(), dst_desc.byte_size()
+                    )));
+                }
+
+                let src_buf = self
+                    .buffer(inputs[0])
+                    .ok_or_else(|| GgmlError::Backend("Missing src buffer".to_string()))?;
+                let dst_buf = self
+                    .buffer(inputs[1])
+                    .ok_or_else(|| GgmlError::Backend("Missing dst buffer".to_string()))?;
+                let out_buf = self
+                    .buffer(outputs[0])
+                    .ok_or_else(|| GgmlError::Backend("Missing output buffer".to_string()))?;
+
+                // Perform accumulate: dst[offset:offset+src_size] += src
+                crate::ggml::hip_backend::ops::accumulate::accumulate(
+                    &self.backend,
+                    src_buf,
+                    dst_buf,
+                    out_buf,
+                    src_elements,
+                    byte_offset,
+                )
+                .map_err(|e| GgmlError::Backend(e.to_string()))
+            }
             _ => Err(GgmlError::Unimplemented(format!(
                 "HIP backend op not implemented: {:?}",
                 op

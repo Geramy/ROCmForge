@@ -23,4 +23,8 @@ pub enum Op {
     Reshape,
     View,
     Copy,
+    // PHASE 5: Accumulate op for efficient KV cache writes
+    // Adds source tensor to destination tensor at given offset
+    // Used for in-place KV cache updates without Copy overhead
+    Accumulate { offset: usize },
 }

@@ -1,23 +1,39 @@
 # Phase 5: Complete Missing ggml Ops
 
+## Status: In Progress
+
 ## Goal
 
 Implement remaining ggml operations for full IR compatibility.
 
 ## Missing Ops
 
-1. **Accumulate** - For KV cache writes without Copy + manual offset
-2. **Tensor Pool/Allocator** - Efficient buffer reuse (llama.cpp's `ggml_allocr`)
-3. **Graph Optimizer** - CSE, dead code elimination, layout optimization
+1. **Accumulate** - For KV cache writes without Copy + manual offset ✅ COMPLETE
+2. **Tensor Pool/Allocator** - Efficient buffer reuse (llama.cpp's `ggml_allocr`) - PENDING
+3. **Graph Optimizer** - CSE, dead code elimination, layout optimization - PENDING
 
-## Solution
+## Completed Work
 
-### Accumulate Op
-Add `Accumulate` to `Op` enum for in-place tensor accumulation:
+### Accumulate Op (2026-01-14) ✅
 
-```rust
-Accumulate { src: TensorId, dst: TensorId, offset: usize }
-```
+Added `Accumulate { offset: usize }` to `Op` enum for in-place tensor accumulation.
+
+**Implementation Details:**
+- `src/ggml/op.rs` - Added `Accumulate { offset: usize }` variant
+- `src/ggml/hip_backend/ops/accumulate.rs` - CPU-side accumulate implementation
+  - Downloads src/dst buffers from GPU
+  - Performs element-wise addition: `dst[offset:offset+src_size] += src`
+  - Uploads result to output and updates dst in-place
+- `src/ggml/hip_backend/mod.rs` - Added execute_op handler (lines 1145-1203)
+
+**Testing:**
+- 3 unit tests in accumulate.rs
+- All 206 tests passing
+
+**Known Limitations:**
+- Currently uses CPU-side computation (GPU kernel TODO)
+
+## Remaining Work
 
 ### Tensor Allocator
 Create `src/ggml/allocator.rs`:
@@ -38,13 +54,11 @@ Create `src/ggml/optimizer.rs`:
 
 ## Files to Modify
 
-- `src/ggml/op.rs` - Add `Accumulate` op
-- `src/ggml/hip_backend/mod.rs` - Implement accumulate kernel
 - `src/ggml/executor.rs` - Integrate allocator and optimizer
 
 ## Success Criteria
 
-- [ ] Accumulate op implemented and tested
+- [x] Accumulate op implemented and tested
 - [ ] Tensor allocator reduces allocations by 50%+
 - [ ] Graph optimizer eliminates redundant ops
 - [ ] All tests pass

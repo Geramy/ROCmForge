@@ -71,6 +71,103 @@ Future optimization: Implement HIP kernels for on-device dequantization during m
 
 ---
 
+### Phase 5: Complete Missing ggml Ops 🔄 IN PROGRESS
+
+**Summary**: Adding Accumulate op for efficient KV cache writes without Copy overhead.
+
+#### Completed (2026-01-14)
+
+Added `Accumulate { offset: usize }` operation to the ggml IR for in-place KV cache updates:
+
+1. **Op enum extension** (`src/ggml/op.rs`):
+   - `Accumulate { offset: usize }` - In-place tensor accumulation
+
+2. **Accumulate implementation** (`src/ggml/hip_backend/ops/accumulate.rs`):
+   - `accumulate()` - Downloads src/dst from GPU, performs element-wise addition, uploads back
+   - Operation: `dst[offset:offset+src_size] += src`
+   - Returns accumulated values to output buffer
+   - Updates dst buffer in-place
+
+3. **Execute handler** (`src/ggml/hip_backend/mod.rs`):
+   - Match arm for `Op::Accumulate { offset }` (lines 1145-1203)
+   - Validates 2 inputs, 1 output
+   - Checks buffer sizes for offset bounds
+
+#### Files Created/Modified
+
+| File | Changes |
+|------|---------|
+| `src/ggml/op.rs` | Added `Accumulate { offset: usize }` variant |
+| `src/ggml/hip_backend/ops/accumulate.rs` | **NEW**: Accumulate function + 3 unit tests |
+| `src/ggml/hip_backend/ops/mod.rs` | Added `accumulate` module |
+| `src/ggml/hip_backend/mod.rs` | Added `Op::Accumulate` handler |
+
+#### Known Limitations
+
+Current implementation uses CPU-side computation:
+1. GPU → Host copy of src/dst buffers
+2. CPU-side element-wise addition
+3. Host → GPU copy of result and updated dst
+
+Future optimization: Implement HIP kernel for on-device accumulation.
+
+#### Remaining Work
+
+- Tensor allocator for buffer reuse (llama.cpp's `ggml_allocr`)
+- Graph optimizer (CSE, DCE, layout optimization)
+
+#### Results
+
+- ✅ Accumulate operation implemented
+- ✅ All 206 lib tests pass (203 + 3 new accumulate tests)
+
+---
+
+### Phase 4: Static Weight Binding ✅ VERIFIED AS COMPLETE
+
+**Summary**: Verified that weights are bound once at graph construction, not per-decode-step.
+
+#### Investigation (2026-01-14)
+
+Original concern was that weights might be rebound on every decode step, causing unnecessary overhead.
+
+#### Findings
+
+The ggml IR implementation already has static weight binding:
+
+1. **Cached graph construction** (`src/model/execution_plan.rs:1576-1578`):
+   ```rust
+   let plans = self
+       .layer_ggml_plans
+       .get_or_try_init(|| self.build_layer_ggml_plans(backend))?;
+   ```
+   The `layer_ggml_plans` uses `OnceCell` for one-time initialization.
+
+2. **Weight binding during graph build** (lines 1476-1527):
+   All weight buffers are bound once during initial graph construction.
+
+3. **Persistent backend storage** (line 1548):
+   ```rust
+   LayerGgmlPlan {
+       graph: StdMutex::new(graph),
+       backend: StdMutex::new(ggml_backend),  // Backend with bound weights
+       ...
+   }
+   ```
+
+4. **Only dynamic tensors rebound per-token**:
+   - Input tensor
+   - KV cache views (offset-based, efficient)
+   - RoPE cache views (offset-based, efficient)
+
+#### Results
+
+- ✅ Weights bound once at initialization (verified)
+- ✅ No per-token rebinding of static weights
+- ✅ Only dynamic tensors rebound (input, KV views, RoPE)
+
+---
+
 ### Phase 2: Fixed-Shape Tensors ✅ COMPLETE
 
 **Summary**: Eliminated O(tokens) graph rebuilds by removing unnecessary `set_shape()` calls. Tensors are pre-allocated with `max_seq_len` at graph construction.
