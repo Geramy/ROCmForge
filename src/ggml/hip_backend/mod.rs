@@ -988,6 +988,160 @@ impl GgmlBackend for HipGgmlBackend {
                     .copy_from_buffer(input_buf)
                     .map_err(|e| GgmlError::Backend(e.to_string()))
             }
+            Op::MatMulQ4_0 => {
+                // PHASE 3: Quantized matmul for Q4_0 format
+                let inputs = _inputs;
+                let outputs = _outputs;
+                if inputs.len() != 2 || outputs.len() != 1 {
+                    return Err(GgmlError::InvalidShape(
+                        "MatMulQ4_0 expects 2 inputs and 1 output".to_string(),
+                    ));
+                }
+
+                let weights_desc = self
+                    .tensor_desc(inputs[0])
+                    .ok_or_else(|| GgmlError::InvalidShape("Missing weights desc".to_string()))?;
+                let input_desc = self
+                    .tensor_desc(inputs[1])
+                    .ok_or_else(|| GgmlError::InvalidShape("Missing input desc".to_string()))?;
+                let output_desc = self
+                    .tensor_desc(outputs[0])
+                    .ok_or_else(|| GgmlError::InvalidShape("Missing output desc".to_string()))?;
+
+                // Validate shapes: weights is 2D, input is 2D
+                if weights_desc.shape.len() != 2 || input_desc.shape.len() != 2 {
+                    return Err(GgmlError::InvalidShape(
+                        "MatMulQ4_0 expects 2D tensors".to_string(),
+                    ));
+                }
+
+                // Q4_0 format: 20 bytes per 32 elements (4 bytes scale + 16 bytes data)
+                let n_rows = weights_desc.shape[0];
+                let n_cols = weights_desc.shape[1];
+                let expected_q4_bytes = ((n_rows * n_cols + 31) / 32) * 20;
+                if weights_desc.byte_size() != expected_q4_bytes {
+                    return Err(GgmlError::InvalidShape(format!(
+                        "MatMulQ4_0 weights size mismatch: expected {} bytes, got {}",
+                        expected_q4_bytes, weights_desc.byte_size()
+                    )));
+                }
+
+                // Validate matmul dimensions
+                let m = input_desc.shape[0] as i32;
+                let k = input_desc.shape[1] as i32;
+                let weights_k = n_cols as i32;
+                let n = n_rows as i32;
+                if k != weights_k {
+                    return Err(GgmlError::InvalidShape(format!(
+                        "MatMulQ4_0 dimension mismatch: k={} weights_k={}",
+                        k, weights_k
+                    )));
+                }
+
+                let weights_buf = self
+                    .buffer(inputs[0])
+                    .ok_or_else(|| GgmlError::Backend("Missing weights buffer".to_string()))?;
+                let input_buf = self
+                    .buffer(inputs[1])
+                    .ok_or_else(|| GgmlError::Backend("Missing input buffer".to_string()))?;
+                let out_buf = self
+                    .buffer(outputs[0])
+                    .ok_or_else(|| GgmlError::Backend("Missing output buffer".to_string()))?;
+
+                // Read quantized weights from GPU
+                let mut quantized_data = vec![0u8; weights_desc.byte_size()];
+                weights_buf
+                    .copy_to_host(&mut quantized_data)
+                    .map_err(|e| GgmlError::Backend(format!("Failed to read weights: {}", e)))?;
+
+                // Perform dequantize + matmul
+                crate::ggml::hip_backend::ops::quantized_matmul::matmul_q4_0(
+                    &self.backend,
+                    &quantized_data,
+                    input_buf,
+                    n_rows,
+                    n_cols,
+                    out_buf,
+                )
+                .map_err(|e| GgmlError::Backend(e.to_string()))
+            }
+            Op::MatMulQ8_0 => {
+                // PHASE 3: Quantized matmul for Q8_0 format
+                let inputs = _inputs;
+                let outputs = _outputs;
+                if inputs.len() != 2 || outputs.len() != 1 {
+                    return Err(GgmlError::InvalidShape(
+                        "MatMulQ8_0 expects 2 inputs and 1 output".to_string(),
+                    ));
+                }
+
+                let weights_desc = self
+                    .tensor_desc(inputs[0])
+                    .ok_or_else(|| GgmlError::InvalidShape("Missing weights desc".to_string()))?;
+                let input_desc = self
+                    .tensor_desc(inputs[1])
+                    .ok_or_else(|| GgmlError::InvalidShape("Missing input desc".to_string()))?;
+                let output_desc = self
+                    .tensor_desc(outputs[0])
+                    .ok_or_else(|| GgmlError::InvalidShape("Missing output desc".to_string()))?;
+
+                // Validate shapes: weights is 2D, input is 2D
+                if weights_desc.shape.len() != 2 || input_desc.shape.len() != 2 {
+                    return Err(GgmlError::InvalidShape(
+                        "MatMulQ8_0 expects 2D tensors".to_string(),
+                    ));
+                }
+
+                // Q8_0 format: 36 bytes per 32 elements (4 bytes scale + 32 bytes data)
+                let n_rows = weights_desc.shape[0];
+                let n_cols = weights_desc.shape[1];
+                let expected_q8_bytes = ((n_rows * n_cols + 31) / 32) * 36;
+                if weights_desc.byte_size() != expected_q8_bytes {
+                    return Err(GgmlError::InvalidShape(format!(
+                        "MatMulQ8_0 weights size mismatch: expected {} bytes, got {}",
+                        expected_q8_bytes, weights_desc.byte_size()
+                    )));
+                }
+
+                // Validate matmul dimensions
+                let m = input_desc.shape[0] as i32;
+                let k = input_desc.shape[1] as i32;
+                let weights_k = n_cols as i32;
+                let n = n_rows as i32;
+                if k != weights_k {
+                    return Err(GgmlError::InvalidShape(format!(
+                        "MatMulQ8_0 dimension mismatch: k={} weights_k={}",
+                        k, weights_k
+                    )));
+                }
+
+                let weights_buf = self
+                    .buffer(inputs[0])
+                    .ok_or_else(|| GgmlError::Backend("Missing weights buffer".to_string()))?;
+                let input_buf = self
+                    .buffer(inputs[1])
+                    .ok_or_else(|| GgmlError::Backend("Missing input buffer".to_string()))?;
+                let out_buf = self
+                    .buffer(outputs[0])
+                    .ok_or_else(|| GgmlError::Backend("Missing output buffer".to_string()))?;
+
+                // Read quantized weights from GPU
+                let mut quantized_data = vec![0u8; weights_desc.byte_size()];
+                weights_buf
+                    .copy_to_host(&mut quantized_data)
+                    .map_err(|e| GgmlError::Backend(format!("Failed to read weights: {}", e)))?;
+
+                // Perform dequantize + matmul
+                crate::ggml::hip_backend::ops::quantized_matmul::matmul_q8_0(
+                    &self.backend,
+                    &quantized_data,
+                    input_buf,
+                    n_rows,
+                    n_cols,
+                    out_buf,
+                )
+                .map_err(|e| GgmlError::Backend(e.to_string()))
+            }
             _ => Err(GgmlError::Unimplemented(format!(
                 "HIP backend op not implemented: {:?}",
                 op

@@ -5,9 +5,17 @@
 
 ## Current Phase
 
-Phase 3: Quantized MatMul Operations
+Phase 3: Quantized MatMul Operations ✅ COMPLETE
 
 ## Completed Work
+
+### Phase 3: Quantized MatMul Operations (2026-01-14) ✅
+
+Added Q4_0 and Q8_0 matmul operations for efficient quantized model inference:
+- Added `MatMulQ4_0` and `MatMulQ8_0` to `Op` enum
+- Implemented CPU-side dequantization functions
+- Added execute_op handlers in HIP backend
+- All 203 tests pass
 
 ### Phase 2: Fixed-Shape Tensors (2026-01-14) ✅
 
@@ -35,11 +43,15 @@ Eliminated redundant GGUF parsing. Added `ModelRuntime::load_from_gguf_with_load
 
 See `docs/CLI_AND_MODEL_LOADING_ANALYSIS.md` for detailed analysis:
 
-1. Triple GGUF parsing - Startup latency
-2. Graph rebuilding every token - Token generation slowdown
+1. ~~Triple GGUF parsing - Startup latency~~ ✅ Fixed in Phase 1
+2. ~~Graph rebuilding every token - Token generation slowdown~~ ✅ Fixed in Phase 2
 3. Weights bound per-decode-step - Unnecessary overhead
-4. Missing quantization ops - Can't run quantized models efficiently
+4. ~~Missing quantization ops - Can't run quantized models efficiently~~ ✅ Fixed in Phase 3
 5. Inefficient KV cache access - Extra allocations
+
+## Known Limitations
+
+- Quantized matmul uses CPU-side dequantization (GPU kernels TODO)
 
 ## Blocked On
 

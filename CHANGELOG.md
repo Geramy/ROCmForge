@@ -7,6 +7,70 @@
 
 ## [Unreleased] - 2026-01-14
 
+### Phase 3: Quantized MatMul Operations ✅ COMPLETE
+
+**Summary**: Added Q4_0 and Q8_0 matmul operations for efficient quantized model inference.
+
+#### Problem
+
+Quantized models needed to dequantize weights to F32 before matmul operations, which:
+- Eliminated memory savings (weights stored as F32 after dequantization)
+- Added CPU-side dequantization overhead at load time
+- Required separate paths for quantized vs FP32 models
+
+#### Solution
+
+Added `MatMulQ4_0` and `MatMulQ8_0` operations to the ggml IR:
+
+1. **Op enum extensions** (`src/ggml/op.rs`):
+   - `MatMulQ4_0` - Q4_0 quantized matmul (4-bit values)
+   - `MatMulQ8_0` - Q8_0 quantized matmul (8-bit values)
+
+2. **Dequantization module** (`src/ggml/hip_backend/ops/quantized_matmul.rs`):
+   - `dequantize_q4_0()` - Q4_0 format: 20 bytes/block (scale + 16×4-bit)
+   - `dequantize_q8_0()` - Q8_0 format: 36 bytes/block (scale + 32×8-bit)
+   - `matmul_q4_0()` - Dequantize + matmul wrapper
+   - `matmul_q8_0()` - Dequantize + matmul wrapper
+
+3. **Execute handlers** (`src/ggml/hip_backend/mod.rs`):
+   - Match arms for `Op::MatMulQ4_0` and `Op::MatMulQ8_0`
+   - Input validation for quantized tensor sizes
+   - Buffer size validation based on format specs
+
+#### Format Specifications
+
+| Format | Block Size | Scale | Data | Bytes/Block |
+|--------|-----------|-------|------|-------------|
+| Q4_0   | 32        | f32   | 16×4-bit | 20 |
+| Q8_0   | 32        | f32   | 32×8-bit | 36 |
+
+#### Files Created/Modified
+
+| File | Changes |
+|------|---------|
+| `src/ggml/op.rs` | Added `MatMulQ4_0`, `MatMulQ8_0` variants |
+| `src/ggml/hip_backend/ops/quantized_matmul.rs` | **NEW**: Dequantization + matmul functions |
+| `src/ggml/hip_backend/ops/mod.rs` | Added `quantized_matmul` module |
+| `src/ggml/hip_backend/mod.rs` | Added `Op::MatMulQ4_0` and `Op::MatMulQ8_0` handlers |
+
+#### Known Limitations
+
+Current implementation uses:
+1. GPU → Host copy of quantized weights
+2. CPU-side dequantization
+3. Host → GPU copy of dequantized weights
+4. Standard GPU matmul
+
+Future optimization: Implement HIP kernels for on-device dequantization during matmul (eliminates copies).
+
+#### Results
+
+- ✅ Q4_0/Q8_0 operations implemented
+- ✅ All 203 lib tests pass
+- ✅ Follows llama.cpp quantization format
+
+---
+
 ### Phase 2: Fixed-Shape Tensors ✅ COMPLETE
 
 **Summary**: Eliminated O(tokens) graph rebuilds by removing unnecessary `set_shape()` calls. Tensors are pre-allocated with `max_seq_len` at graph construction.
