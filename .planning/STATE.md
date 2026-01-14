@@ -24,8 +24,9 @@ Phase 5: Complete Missing ggml Ops 🔄 IN PROGRESS
   - 4 unit tests
 
 **Remaining:**
-- Graph optimizer (CSE, DCE, layout optimization)
 - Real-world performance measurement of allocator impact
+- Optimizer integration into executor
+- Layout optimization (RowMajor vs ColMajor)
 
 ## Completed Work
 

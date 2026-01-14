@@ -50,13 +50,28 @@ Implemented buffer pooling and reuse inspired by llama.cpp's `ggml_allocr`.
 
 **Known Limitations:** Exact-size matching only (no best-fit with splits)
 
-## Remaining Work
+### 3. Graph Optimizer (2026-01-14) ✅
 
-### Graph Optimizer
-Create `src/ggml/optimizer.rs`:
-- Common subexpression elimination
-- Dead code elimination
-- Layout optimization (RowMajor vs ColMajor)
+Implemented graph optimization passes inspired by llama.cpp's graph optimization.
+
+**Implementation Details:**
+- `src/ggml/optimizer.rs` - GraphOptimizer with three passes:
+  - **Dead Code Elimination (DCE)**: Remove nodes not contributing to graph outputs
+  - **Common Subexpression Elimination (CSE)**: Deduplicate identical computations
+  - **No-op elimination**: Remove redundant View/Reshape operations
+
+**Key Features:**
+- Configurable passes (`without_dce()`, `without_cse()`, `without_noop_elimination()`)
+- `OptimizerStats` for tracking removed nodes
+- `DependencyInfo` for tracking tensor usage
+- `NodeSignature` for operation comparison (handles f32 Hash/Eq via to_bits())
+
+**Testing:** 8 unit tests in optimizer.rs
+
+**Known Limitations:**
+- Layout optimization (RowMajor vs ColMajor) not yet implemented
+- CSE remapping is simplified - full tensor cleanup TODO
+- DCE treats all unused tensors as outputs (needs explicit graph markers)
 
 ## Files Created
 
@@ -64,13 +79,13 @@ Create `src/ggml/optimizer.rs`:
 |------|---------|
 | `src/ggml/allocator.rs` | Tensor pool/allocator ✅ |
 | `src/ggml/hip_backend/ops/accumulate.rs` | Accumulate op ✅ |
-| `src/ggml/optimizer.rs` | Graph optimization passes - TODO |
+| `src/ggml/optimizer.rs` | Graph optimization passes ✅ |
 
 ## Files Modified
 
 | File | Changes |
 |------|---------|
-| `src/ggml/mod.rs` | Added allocator module ✅ |
+| `src/ggml/mod.rs` | Added allocator and optimizer modules ✅ |
 | `src/ggml/hip_backend/mod.rs` | Integrated allocator, added Accumulate handler ✅ |
 | `src/ggml/hip_backend/ops/mod.rs` | Added accumulate module ✅ |
 | `src/ggml/executor.rs` | TODO: Integrate optimizer |
@@ -81,5 +96,5 @@ Create `src/ggml/optimizer.rs`:
 - [x] Accumulate op implemented and tested
 - [x] Tensor allocator implemented and tested
 - [ ] Tensor allocator reduces allocations by 50%+ (needs real workload measurement)
-- [ ] Graph optimizer eliminates redundant ops
-- [x] All tests pass (210 tests)
+- [x] Graph optimizer eliminates redundant ops
+- [x] All tests pass (218 tests)

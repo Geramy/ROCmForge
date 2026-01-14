@@ -7,6 +7,7 @@ pub mod executor;
 pub mod graph;
 pub mod layout;
 pub mod op;
+pub mod optimizer;
 pub mod shape;
 pub mod tensor;
 pub mod validate;
