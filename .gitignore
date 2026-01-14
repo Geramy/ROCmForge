@@ -137,3 +137,8 @@ src.zip
 *.hipfb
 target/debug/build/*/out/
 /models/
+
+# AI assistant configuration files (local development only)
+CLAUDE.md
+AGENTS.md
+agents.md
