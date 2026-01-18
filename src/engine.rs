@@ -11,7 +11,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 use thiserror::Error;
 use tokio::sync::{Notify, RwLock};
-use tracing::{error, info, warn};
+use tracing::{debug, error, info, warn};
 
 #[derive(Error, Debug)]
 pub enum EngineError {
@@ -89,14 +89,16 @@ struct RequestRuntimeState {
 impl InferenceEngine {
     pub fn new(config: EngineConfig) -> EngineResult<Self> {
         info!("Initializing ROCmForge inference engine");
-        eprintln!("InferenceEngine::new: Starting...");
-        tracing::debug!("InferenceEngine::new: Starting engine initialization");
+        debug!("InferenceEngine::new: Starting engine initialization");
 
         // Initialize HIP backend
-        tracing::debug!("InferenceEngine::new: Creating cache config");
-        eprintln!(
-            "InferenceEngine::new: cache pages={}, heads={}, head_dim={}, layers={}",
-            config.max_cache_pages, config.num_heads, config.head_dim, config.num_layers
+        debug!("InferenceEngine::new: Creating cache config");
+        debug!(
+            cache_pages = config.max_cache_pages,
+            heads = config.num_heads,
+            head_dim = config.head_dim,
+            layers = config.num_layers,
+            "InferenceEngine::new: engine configuration"
         );
         let cache_config = CacheConfig::new(
             config.cache_page_size,
@@ -284,15 +286,15 @@ impl InferenceEngine {
     }
 
     pub async fn run_inference_loop(&self) {
-        eprintln!(">>> run_inference_loop() ENTRY");
+        debug!("run_inference_loop() ENTRY");
         let is_running = {
             let flag = self.is_running.read().await;
-            eprintln!(">>> run_inference_loop() is_running={}", *flag);
+            debug!(is_running = *flag, "run_inference_loop() checking state");
             *flag
         };
 
         if is_running {
-            eprintln!(">>> run_inference_loop() spawning inner inference loop task");
+            debug!("run_inference_loop() spawning inner inference loop task");
             // Start inference loop in background
             let config = self.config.clone();
             let backend = self.backend.clone();
@@ -307,8 +309,8 @@ impl InferenceEngine {
             let is_running = self.is_running.clone();
 
             tokio::spawn(async move {
-                eprintln!(">>> INNER inference loop task STARTED");
-                eprintln!(">>> INNER: creating InferenceEngine clone...");
+                debug!("INNER inference loop task STARTED");
+                debug!("INNER: creating InferenceEngine clone...");
                 let engine_clone = InferenceEngine {
                     config,
                     backend,
@@ -322,15 +324,15 @@ impl InferenceEngine {
                     onnx_loader,
                     is_running,
                 };
-                eprintln!(">>> INNER: InferenceEngine clone created, calling inference_loop()...");
+                debug!("INNER: InferenceEngine clone created, calling inference_loop()...");
                 engine_clone.inference_loop().await;
-                eprintln!(">>> INNER inference loop task ENDED");
+                debug!("INNER inference loop task ENDED");
             });
-            eprintln!(">>> run_inference_loop() inner task spawned");
+            debug!("run_inference_loop() inner task spawned");
         } else {
-            eprintln!(">>> run_inference_loop() NOT spawning because is_running=false");
+            debug!("run_inference_loop() NOT spawning because is_running=false");
         }
-        eprintln!(">>> run_inference_loop() EXIT");
+        debug!("run_inference_loop() EXIT");
     }
 
     pub async fn stop(&self) -> EngineResult<()> {
@@ -476,31 +478,22 @@ impl InferenceEngine {
     }
 
     async fn inference_loop(&self) {
-        eprintln!(">>> inference_loop() ENTRY - Starting inference loop");
+        debug!("inference_loop() ENTRY - Starting inference loop");
         info!("Starting inference loop");
-        tracing::debug!("inference_loop() started");
 
         let mut iteration = 0u64;
-        eprintln!(">>> inference_loop: entering while loop...");
+        debug!("inference_loop: entering while loop...");
         while *self.is_running.read().await {
             iteration += 1;
             if iteration % 100 == 0 {
-                tracing::debug!("inference_loop iteration {}", iteration);
-            }
-            if iteration == 1 || iteration % 100 == 0 {
-                eprintln!(">>> inference_loop iteration {}", iteration);
+                debug!(iteration, "inference_loop iteration");
             }
 
             let start_time = Instant::now();
 
             // Check if we can create a batch
-            eprintln!(
-                ">>> inference_loop iter {}: about to read scheduler...",
-                iteration
-            );
             let (pending, can_create) = {
                 let scheduler = self.scheduler.read().await;
-                eprintln!(">>> inference_loop iter {}: scheduler read complete, checking pending/can_create...", iteration);
                 (
                     scheduler.has_pending_requests(),
                     scheduler.can_create_batch(),
@@ -508,87 +501,65 @@ impl InferenceEngine {
             };
 
             if iteration % 100 == 0 || (pending && can_create) {
-                tracing::debug!(
-                    "inference_loop iter={} has_pending={} can_create={}",
+                debug!(
                     iteration,
-                    pending,
-                    can_create
+                    has_pending = pending,
+                    can_create,
+                    "inference_loop state"
                 );
             }
-            eprintln!(
-                ">>> inference_loop iter {}: has_pending={} can_create={}",
-                iteration, pending, can_create
-            );
 
             if can_create {
-                eprintln!(
-                    ">>> inference_loop iter {}: calling process_batch()",
-                    iteration
-                );
-                tracing::debug!("inference_loop calling process_batch()");
+                debug!(iteration, "inference_loop calling process_batch()");
                 if let Err(e) = self.process_batch().await {
-                    error!("Error processing batch: {}", e);
+                    error!(iteration, error = %e, "Error processing batch");
                 }
-                eprintln!(
-                    ">>> inference_loop iter {}: process_batch returned",
-                    iteration
-                );
+                debug!(iteration, "inference_loop process_batch returned");
             }
 
             // Sleep to avoid busy waiting
             let elapsed = start_time.elapsed();
             if elapsed < self.config.batch_timeout {
-                eprintln!(
-                    ">>> inference_loop iter {}: sleeping for {:?}...",
-                    iteration,
-                    self.config.batch_timeout - elapsed
-                );
-                tokio::time::sleep(self.config.batch_timeout - elapsed).await;
+                let sleep_duration = self.config.batch_timeout - elapsed;
+                debug!(iteration, sleep_duration_ms = sleep_duration.as_millis(), "inference_loop sleeping");
+                tokio::time::sleep(sleep_duration).await;
             }
         }
 
         info!("Inference loop stopped");
-        tracing::debug!("inference_loop() stopped");
+        debug!("inference_loop() stopped");
     }
 
     async fn process_batch(&self) -> EngineResult<()> {
-        eprintln!(">>> process_batch() ENTRY");
+        debug!("process_batch() ENTRY");
         // Get next iteration batch using continuous batching
-        eprintln!(">>> process_batch: about to acquire scheduler write lock...");
         let iteration_batch = {
             let mut scheduler = self.scheduler.write().await;
-            eprintln!(">>> process_batch: scheduler write lock acquired, calling get_next_iteration_batch...");
             scheduler
                 .get_next_iteration_batch()
                 .map_err(|e| EngineError::SchedulerError(e.to_string()))?
         };
-        eprintln!(
-            ">>> process_batch: iteration batch obtained, size={}",
-            iteration_batch.size()
-        );
+        debug!(batch_size = iteration_batch.size(), "process_batch: iteration batch obtained");
 
         if iteration_batch.is_empty() {
-            eprintln!(">>> process_batch: batch is empty, returning early");
+            debug!("process_batch: batch is empty, returning early");
             return Ok(());
         }
 
-        eprintln!(">>> process_batch: about to log batch info...");
         info!(
-            "Processing iteration batch with {} requests",
-            iteration_batch.size()
+            batch_size = iteration_batch.size(),
+            "Processing iteration batch"
         );
-        eprintln!(">>> process_batch: batch info logged, about to clone requests...");
-        eprintln!(
-            ">>> process_batch: iteration_batch.requests.len()={}",
-            iteration_batch.requests.len()
+        debug!(
+            request_count = iteration_batch.requests.len(),
+            "process_batch: cloning requests"
         );
 
         // Process each request in the batch while keeping scheduler state in sync
-        eprintln!(">>> process_batch: starting clone of iteration_batch.requests...");
         let original_requests = iteration_batch.requests.clone();
-        eprintln!(
-            ">>> process_batch: clone complete, original_requests.len()={}",
-            original_requests.len()
+        debug!(
+            original_count = original_requests.len(),
+            "process_batch: clone complete"
         );
         let mut refreshed_requests = Vec::with_capacity(original_requests.len());
 
@@ -766,44 +737,47 @@ impl InferenceEngine {
         // Get mutable access to shared runtime for decode_step
         let mut runtime = runtime_arc.write().await;
 
-        eprintln!(
-            ">>> inference: Starting token processing loop, {} tokens to process",
-            tokens_to_process.len()
+        let total_tokens = tokens_to_process.len();
+        debug!(
+            total_tokens,
+            request_id = request.request_id,
+            "run_forward_pass: starting token processing loop"
         );
 
         let mut logits_tensor = None;
         let mut processed = start_idx;
         for (idx, token) in tokens_to_process.iter().enumerate() {
-            eprintln!(
-                ">>> inference: Processing token {}/{}, value={}",
-                idx + 1,
-                tokens_to_process.len(),
-                token
+            debug!(
+                request_id = request.request_id,
+                token_index = idx + 1,
+                total_tokens,
+                token_value = token,
+                "run_forward_pass: processing token"
             );
             let token_slice = [*token];
             let execution_plan = runtime.execution_plan().ok_or_else(|| {
                 EngineError::InferenceFailed("Execution plan missing".to_string())
             })?;
             // Get embedding weights (now returns owned DeviceTensor due to lazy loading)
-            eprintln!(">>> inference: Fetching embedding weights...");
             let embedding_weights = execution_plan
                 .embedding_weights()
                 .map_err(|e| EngineError::InferenceFailed(e.to_string()))?;
-            eprintln!(">>> inference: Embedding weights fetched, doing embedding_lookup...");
             let embeddings = execution_plan
                 .embedding_lookup(&backend, &token_slice, &embedding_weights)
                 .map_err(|e| EngineError::InferenceFailed(e.to_string()))?;
 
-            eprintln!(">>> inference: Calling decode_step...");
             let logits = runtime
                 .decode_step(&embeddings)
                 .map_err(|e| EngineError::InferenceFailed(e.to_string()))?;
-            eprintln!(">>> inference: decode_step complete");
             logits_tensor = Some(logits);
             processed += 1;
         }
 
-        eprintln!(">>> inference: Token processing loop complete");
+        debug!(
+            request_id = request.request_id,
+            tokens_processed = processed - start_idx,
+            "run_forward_pass: token processing loop complete"
+        );
 
         // Update per-request state
         {
