@@ -78,6 +78,10 @@ cc = "1.0"
 name = "phase12_benchmark"
 harness = false
 
+[[bench]]
+name = "attention_bench"
+harness = false
+
 # Binaries
 [[bin]]
 name = "inspect_gguf"
