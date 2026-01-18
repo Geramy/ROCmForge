@@ -5,6 +5,7 @@ use crate::kv_cache::{CacheConfig, KvCache};
 use crate::loader::{GgufLoader, OnnxLoader};
 use crate::sampler::{Sampler, SamplingConfig};
 use crate::scheduler::{GenerationRequest, RequestState, Scheduler, SchedulerConfig};
+use serde::Serialize;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -854,6 +855,62 @@ impl InferenceEngine {
             model_loaded: self.model_runtime.is_some(),
         }
     }
+
+    /// Get health status for monitoring endpoints
+    ///
+    /// Returns comprehensive health information including:
+    /// - Engine running state
+    /// - Model loaded status
+    /// - GPU availability and memory
+    /// - Active request count
+    /// - Cache statistics
+    pub async fn get_health_status(&self) -> HealthStatus {
+        let is_running = *self.is_running.read().await;
+        let model_loaded = self.model_runtime.is_some();
+
+        // Get scheduler stats
+        let (pending_requests, processing_requests) = {
+            let scheduler = self.scheduler.read().await;
+            let stats = scheduler.get_queue_stats();
+            (stats.pending_requests, stats.processing_requests)
+        };
+
+        // Get cache stats
+        let (total_pages, free_pages, active_sequences) = {
+            let kv_cache = self.kv_cache.read().await;
+            let stats = kv_cache.get_cache_stats();
+            (stats.total_pages, stats.free_pages, stats.active_sequences)
+        };
+
+        // Get GPU status from backend
+        let gpu_status = self.backend.get_gpu_status();
+        let (gpu_memory_free, gpu_memory_total, gpu_error) = match gpu_status {
+            (Some((free, total)), None) => (Some(free), Some(total), None),
+            (None, Some(err)) => (None, None, Some(err)),
+            _ => (None, None, None),
+        };
+
+        HealthStatus {
+            status: if is_running && model_loaded {
+                "healthy".to_string()
+            } else if is_running {
+                "degraded".to_string()
+            } else {
+                "unhealthy".to_string()
+            },
+            engine_running: is_running,
+            model_loaded,
+            gpu_available: gpu_memory_total.is_some(),
+            gpu_memory_free,
+            gpu_memory_total,
+            gpu_error,
+            active_requests: processing_requests,
+            queued_requests: pending_requests,
+            cache_pages_used: total_pages.saturating_sub(free_pages),
+            cache_pages_total: total_pages,
+            active_sequences,
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -862,6 +919,35 @@ pub struct EngineStats {
     pub scheduler_stats: crate::scheduler::QueueStats,
     pub cache_stats: crate::kv_cache::CacheStats,
     pub model_loaded: bool,
+}
+
+/// Health status information for monitoring endpoints
+#[derive(Debug, Clone, Serialize)]
+pub struct HealthStatus {
+    /// Overall health status: healthy, degraded, or unhealthy
+    pub status: String,
+    /// Whether the inference engine is running
+    pub engine_running: bool,
+    /// Whether a model is currently loaded
+    pub model_loaded: bool,
+    /// Whether GPU is available
+    pub gpu_available: bool,
+    /// Free GPU memory in bytes (if available)
+    pub gpu_memory_free: Option<usize>,
+    /// Total GPU memory in bytes (if available)
+    pub gpu_memory_total: Option<usize>,
+    /// GPU error message (if GPU query failed)
+    pub gpu_error: Option<String>,
+    /// Number of currently processing requests
+    pub active_requests: usize,
+    /// Number of queued requests
+    pub queued_requests: usize,
+    /// Number of KV cache pages in use
+    pub cache_pages_used: usize,
+    /// Total number of KV cache pages
+    pub cache_pages_total: usize,
+    /// Number of active sequences in cache
+    pub active_sequences: usize,
 }
 
 #[cfg(test)]

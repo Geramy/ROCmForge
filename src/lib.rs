@@ -26,6 +26,7 @@ pub mod engine;
 pub mod error;
 pub mod http;
 pub mod logging;
+// pub mod metrics; // TODO: Task 10-09 - incomplete, needs fixing
 pub mod ggml;
 pub mod kv_cache;
 pub mod loader;
@@ -33,6 +34,7 @@ pub mod mlp;
 pub mod model;
 pub mod models;
 pub mod ops;
+pub mod otel_traces;
 pub mod profiling;
 pub mod prompt;
 pub mod sampler;
@@ -47,12 +49,17 @@ mod hip_isolation_test;
 
 pub use attention::Attention;
 pub use backend::HipBackend;
-pub use engine::InferenceEngine;
+pub use engine::{HealthStatus, InferenceEngine};
 pub use error::{ErrorCategory, ForgeResult, RocmForgeError};
 pub use kv_cache::KvCache;
 pub use logging::{
     init_logging_default, init_logging_from_env, init_tracing, is_initialized,
     LogLevel, LogFormat, LoggingConfig, LoggingError,
+};
+pub use otel_traces::{
+    export_traces, init_trace_store, record_span, trace_count, clear_traces,
+    Attribute, AttributeValue, InferenceSpanBuilder, Resource, ResourceSpans, Scope,
+    ScopeSpans, Span, SpanEvent, SpanKind, SpanStatus, TraceConfig, TraceExport, TraceStore,
 };
 pub use profiling::{KernelTimer, ScopedTimer};
 pub use sampler::Sampler;

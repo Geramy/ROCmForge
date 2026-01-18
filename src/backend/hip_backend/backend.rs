@@ -1402,6 +1402,17 @@ impl HipBackend {
         Ok((free, total))
     }
 
+    /// Get GPU health status for monitoring
+    ///
+    /// Returns a tuple of (available, total) memory in bytes, or an error if GPU is unavailable.
+    /// This is a non-failing version used for health checks.
+    pub fn get_gpu_status(&self) -> (Option<(usize, usize)>, Option<String>) {
+        match self.get_memory_info() {
+            Ok((free, total)) => (Some((free, total)), None),
+            Err(e) => (None, Some(e.to_string())),
+        }
+    }
+
     // ========== Phase 20.2: Conservative Memory Allocation ==========
 
     /// Check if an allocation of given size is safe
