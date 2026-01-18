@@ -19,6 +19,13 @@ pub mod hybrid_scheduler;
 pub use dummy_backend::DummyBackend;
 pub use optimizer::{GraphOptimizer, OptimizerStats};
 
+// Hybrid scheduler exports
+pub use hybrid_scheduler::{
+    CapabilityProvider, HybridScheduler, ExecutionStrategy,
+    OpCapability, OpType, OpCost, BackendSelection, SelectionReason,
+    ExecutionEvent, BackendStats,
+};
+
 #[derive(Debug, Clone)]
 pub enum GgmlError {
     InvalidShape(String),
