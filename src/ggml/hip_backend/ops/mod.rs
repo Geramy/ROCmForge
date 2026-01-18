@@ -3,6 +3,7 @@
 pub mod accumulate;
 pub mod add_scale;
 pub mod copy;
+pub mod fused_ops;
 pub mod get_rows;
 pub mod matmul;
 pub mod mask;

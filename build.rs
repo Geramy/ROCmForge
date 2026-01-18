@@ -132,6 +132,16 @@ fn compile_hip_kernels() {
             "Q2_K_DEQUANT_HSACO",
             "q2_k_to_fp32_kernel",
         ),
+        (
+            "kernels/fused_dequant_rmsnorm.hip",
+            "FUSED_DEQUANT_RMSNORM_HSACO",
+            "fused_q4_0_rmsnorm_kernel",
+        ),
+        (
+            "kernels/fused_rope_kvappend.hip",
+            "FUSED_ROPE_KVAPPEND_HSACO",
+            "fused_rope_kv_cache_append_kernel",
+        ),
     ];
 
     for (src_file, env_name, kernel_name) in &kernels {
