@@ -4,7 +4,7 @@
 // Phase 8: GGUF Compatibility - Task 08-11
 // Documents GGUF compatibility across architectures and quantization formats
 
-use rocmforge::loader::tensor_type::GgufTensorType;
+use rocmforge::loader::gguf::GgufTensorType;
 
 /// Check if a quantization format is supported
 pub fn is_format_supported(format: GgufTensorType) -> bool {
@@ -59,9 +59,9 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_all_13_formats_supported() {
-        // Verify all 13 GGUF quantization formats are supported
-        assert_eq!(supported_format_count(), 13, "Should support all 13 GGUF formats");
+    fn test_all_15_formats_supported() {
+        // Verify all 15 GGUF quantization formats are supported
+        assert_eq!(supported_format_count(), 15, "Should support all 15 GGUF formats");
     }
 
     #[test]
