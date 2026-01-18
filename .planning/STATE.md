@@ -10,17 +10,17 @@ See: .planning/PROJECT.md (updated 2026-01-18)
 ## Current Position
 
 Phase: 5 of 10 (Quantized Operations)
-Plan: 2 of 4
-Status: In progress
-Last activity: 2026-01-18 — Completed 05-02 (Q4_0 dequantization kernel)
+Plan: 4 of 4
+Status: Phase complete
+Last activity: 2026-01-18 — Completed 05-04 (Fused Q4_0 matmul kernel)
 
-Progress: ████████░░ 65% (Phases 1-4 complete, Phase 5 in progress)
+Progress: █████████░ 70% (Phases 1-4 complete, Phase 5 complete)
 
-**Phase 5 Status:** 🔄 In Progress
+**Phase 5 Status:** ✅ Complete
 - 05-01: Complete - Quantization research (RESEARCH.md with format specifications and implementation strategy)
 - 05-02: Complete - Q4_0 dequantization kernel (HIP kernel + Rust wrapper + tests)
-- 05-03: Pending - K-quant dequantization kernels (Q8_0, Q4_K, Q6_K HIP kernels)
-- 05-04: Pending - Quantized matmul integration
+- 05-03: Complete - K-quant dequantization kernels (Q8_0, Q4_K, Q6_K HIP kernels)
+- 05-04: Complete - Fused Q4_0 matmul kernel (dequant+matmul, ~17x bandwidth reduction)
 
 **Phase 4 Status:** ✅ Complete
 - 04-01: Complete - SIMD strategy selection (std::simd, MSRV 1.82+, 4-8x expected speedup)
@@ -566,6 +566,43 @@ The plan originally recommended `packed_simd`, but research revealed this crate 
 - No Rust wrappers implemented yet (per plan specification)
 - No runtime tests (requires GPU hardware and wrappers)
 - Q4_0 Rust wrapper exists but Q8_0/Q4_K/Q6_K wrappers pending
+
+## Phase 5 Plan 4 Summary
+
+**Completed:** 2026-01-18
+**Duration:** ~25 min
+
+### Accomplishments
+
+1. **Fused Q4_0 MatMul Kernel** - Implemented on-the-fly dequantization during matmul
+2. **Memory Bandwidth Reduction** - ~17x reduction vs traditional dequant+matmul approach
+3. **Kernel Cache Pattern** - Global Mutex<Option<Cache>> for lazy kernel initialization
+4. **CPU Fallback** - Non-rocm builds use CPU dequantization + standard matmul
+
+### Commits
+
+- `8aa6863`: feat(05-04): create fused Q4_0 dequant-matmul HIP kernel
+- `ec5bfe4`: build(05-04): add Q4_0 matmul kernel to build system
+- `7ba744f`: feat(05-04): update quantized_matmul.rs with fused GPU implementation
+
+### Decisions Made
+
+- **Maintain backward compatibility:** Kept existing matmul_q4_0 API (n_rows, n_cols)
+- **Element-based kernel:** Used simpler element-based variant over row-based optimization
+- **Feature-gated implementations:** #[cfg(feature = "rocm")] for GPU, fallback otherwise
+
+### Files Created/Modified
+
+- `kernels/q4_0_matmul.hip` - Fused dequant+matmul kernel (285 lines)
+- `build.rs` - Added Q4_0 matmul kernel to kernels array
+- `src/ggml/hip_backend/ops/quantized_matmul.rs` - Enhanced with fused implementation (582 lines)
+
+### Key Innovation
+
+**Fused dequantization + matmul** eliminates the intermediate FP32 weight buffer:
+- Traditional: Read Q4_0, Write FP32, Read FP32 (~8.5*K*N bytes)
+- Fused: Read Q4_0 twice (~0.5*K*N bytes)
+- **~17x memory bandwidth reduction**
 
 ---
 
