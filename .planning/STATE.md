@@ -10,17 +10,17 @@ See: .planning/PROJECT.md (updated 2026-01-18)
 ## Current Position
 
 Phase: 7 of 10 (Hybrid Execution)
-Plan: 3 of 4
-Status: 07-03 complete, Plan 3 complete
-Last activity: 2026-01-18 — Completed 07-03 (Cost modeling for backend selection)
+Plan: 4 of 4
+Status: 07-04 complete, Phase 7 complete
+Last activity: 2026-01-18 — Completed 07-04 (Telemetry for execution path debugging)
 
-Progress: ██████████ 86% (Phases 1-6 complete, Phase 7 plan 3/4 complete)
+Progress: ██████████ 88% (Phases 1-6 complete, Phase 7 complete)
 
-**Phase 7 Status:** 🔄 In Progress (3/4 plans complete)
+**Phase 7 Status:** ✅ Complete (4/4 plans complete)
 - 07-01: Complete - Hybrid scheduler architecture (CapabilityProvider trait, HybridScheduler with 4 strategies, telemetry system)
 - 07-02: Complete - Backend capability implementation (CpuBackend and HipGgmlBackend implement CapabilityProvider)
 - 07-03: Complete - Cost modeling for backend selection (Enhanced cost estimation, automatic selection, HybridExecutor)
-- 07-04: Pending - Integration and testing
+- 07-04: Complete - Telemetry for execution path debugging (Execution timing, reporting methods, integration tests)
 
 **Phase 6 Status:** ✅ Complete
 - 06-01: Complete - Flash attention research (RESEARCH.md with kernel documentation and integration strategy)
@@ -225,6 +225,42 @@ Resume file: None
 - **Total tests**: 317 passing (14 hybrid_scheduler + 17 cpu_backend + 6 hip_backend + 280 others)
 - **New tests**: 6 automatic selection tests
 - **All tests**: 315 passing
+
+## Phase 7 Plan 4 Summary
+
+**Completed:** 2026-01-18
+**Duration:** ~20 min
+
+### Accomplishments
+
+1. **Execution Timing** - Enhanced HybridExecutor with execute_op_with_telemetry() for automatic operation timing
+2. **Telemetry Reporting** - Added execution_summary(), print_debug_summary(), and operations_by_type() methods
+3. **BackendExecutionSummary** - New public struct for execution statistics (ops, time by backend)
+4. **9/9 Integration Tests Passing** - Comprehensive telemetry tests in tests/hybrid_scheduler_tests.rs
+
+### Commits
+
+- `77ef8f6`: feat(07-04): add execution timing to HybridExecutor
+- `85dfd15`: test(07-04): add integration tests for telemetry system
+- `feb0620`: docs(07-04): export BackendExecutionSummary and add module documentation
+
+### Decisions Made
+
+- **Execution timing in HybridExecutor** - Consistent telemetry regardless of backend
+- **Simplified selection reason** - Uses CpuFallback for all events (full integration requires deeper refactoring)
+- **Print to stderr** - eprintln! for debug output to avoid stdout interference
+- **Missing duration handling** - Tests verify None durations are handled correctly
+
+### Files Created/Modified
+
+- `tests/hybrid_scheduler_tests.rs` - 220 LOC, 9 integration tests
+- `src/ggml/hybrid_scheduler.rs` - Added telemetry reporting methods (+159 LOC)
+- `src/ggml/mod.rs` - Added BackendExecutionSummary export
+
+### Test Coverage
+
+- **Total tests**: 23 for hybrid_scheduler (14 unit + 9 integration)
+- **New tests**: 9 telemetry integration tests
 
 ## Phase 2 Plan 2 Summary
 
