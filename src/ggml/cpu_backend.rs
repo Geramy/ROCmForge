@@ -5,6 +5,7 @@
 //! vectorization across x86_64 (AVX2) and aarch64 (NEON).
 
 use crate::ggml::{GgmlBackend, GgmlError, GgmlResult, Op, TensorDesc, TensorId};
+use crate::ggml::hybrid_scheduler::{CapabilityProvider, OpCapability, OpType};
 use std::collections::HashMap;
 
 /// CPU backend with optional SIMD acceleration
@@ -395,10 +396,85 @@ impl GgmlBackend for CpuBackend {
     }
 }
 
+impl CapabilityProvider for CpuBackend {
+    fn capabilities(&self) -> Vec<OpCapability> {
+        use crate::ggml::DType;
+        let mut caps = Vec::new();
+
+        // CPU supports all basic operations for all data types
+        // CPU has no size limit (limited only by system RAM)
+        let basic_dtypes = vec![DType::F32, DType::F16, DType::I32];
+
+        for dtype in basic_dtypes {
+            caps.push(OpCapability {
+                op_type: OpType::MatMul,
+                supported_dtypes: vec![dtype],
+                max_tensor_size: None,
+                requires_feature: None,
+            });
+            caps.push(OpCapability {
+                op_type: OpType::Add,
+                supported_dtypes: vec![dtype],
+                max_tensor_size: None,
+                requires_feature: None,
+            });
+            caps.push(OpCapability {
+                op_type: OpType::Scale,
+                supported_dtypes: vec![dtype],
+                max_tensor_size: None,
+                requires_feature: None,
+            });
+        }
+
+        // Softmax only supports F32
+        caps.push(OpCapability {
+            op_type: OpType::Softmax,
+            supported_dtypes: vec![DType::F32],
+            max_tensor_size: None,
+            requires_feature: None,
+        });
+
+        // Quantized operations - CPU dequantization always available
+        caps.push(OpCapability {
+            op_type: OpType::QuantizedMatMul,
+            supported_dtypes: vec![DType::F32],
+            max_tensor_size: None,
+            requires_feature: None,
+        });
+
+        // Attention operations - CPU has fallback implementation
+        caps.push(OpCapability {
+            op_type: OpType::Attention,
+            supported_dtypes: vec![DType::F32],
+            max_tensor_size: None,
+            requires_feature: None,
+        });
+
+        caps
+    }
+
+    fn op_capability(&self, op: &Op) -> Option<OpCapability> {
+        use crate::ggml::DType;
+        let op_type = OpType::from_op(op)?;
+
+        Some(OpCapability {
+            op_type,
+            supported_dtypes: vec![DType::F32],
+            max_tensor_size: None,
+            requires_feature: None,
+        })
+    }
+
+    fn backend_id(&self) -> &str {
+        "cpu"
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::ggml::{DType, Layout};
+    use crate::ggml::hybrid_scheduler::{CapabilityProvider, OpType};
     use std::sync::atomic::{AtomicUsize, Ordering};
 
     fn make_test_tensor_id() -> TensorId {
@@ -585,5 +661,73 @@ mod tests {
         for &val in result {
             assert!(val > 0.0);
         }
+    }
+
+    // CapabilityProvider tests
+    #[test]
+    fn test_cpu_capabilities_includes_matmul() {
+        let backend = CpuBackend::new();
+        let caps = backend.capabilities();
+        assert!(caps.iter().any(|c| c.op_type == OpType::MatMul));
+    }
+
+    #[test]
+    fn test_cpu_can_execute_matmul() {
+        let backend = CpuBackend::new();
+        let op = Op::MatMul;
+        assert!(backend.can_execute(&op));
+    }
+
+    #[test]
+    fn test_cpu_can_execute_softmax() {
+        let backend = CpuBackend::new();
+        let op = Op::Softmax;
+        assert!(backend.can_execute(&op));
+    }
+
+    #[test]
+    fn test_cpu_can_execute_add() {
+        let backend = CpuBackend::new();
+        let op = Op::Add;
+        assert!(backend.can_execute(&op));
+    }
+
+    #[test]
+    fn test_cpu_can_execute_scale() {
+        let backend = CpuBackend::new();
+        let op = Op::Scale { factor: 2.0 };
+        assert!(backend.can_execute(&op));
+    }
+
+    #[test]
+    fn test_cpu_backend_id() {
+        let backend = CpuBackend::new();
+        assert_eq!(backend.backend_id(), "cpu");
+    }
+
+    #[test]
+    fn test_cpu_supports_all_basic_ops() {
+        let backend = CpuBackend::new();
+        let caps = backend.capabilities();
+
+        let mut found_matmul = false;
+        let mut found_add = false;
+        let mut found_scale = false;
+        let mut found_softmax = false;
+
+        for cap in &caps {
+            match cap.op_type {
+                OpType::MatMul => found_matmul = true,
+                OpType::Add => found_add = true,
+                OpType::Scale => found_scale = true,
+                OpType::Softmax => found_softmax = true,
+                _ => {}
+            }
+        }
+
+        assert!(found_matmul, "CPU should support MatMul");
+        assert!(found_add, "CPU should support Add");
+        assert!(found_scale, "CPU should support Scale");
+        assert!(found_softmax, "CPU should support Softmax");
     }
 }
