@@ -772,6 +772,232 @@ impl OmniperfProfileBuilder {
     }
 }
 
+/// Memory bandwidth analysis from profiling results
+#[derive(Debug, Clone)]
+pub struct MemoryBandwidthAnalysis {
+    /// Total bytes read from memory
+    pub bytes_read: u64,
+    /// Total bytes written to memory
+    pub bytes_written: u64,
+    /// Total bytes transferred
+    pub bytes_total: u64,
+    /// Execution time in seconds
+    pub duration_secs: f64,
+    /// Memory bandwidth in GB/s
+    pub bandwidth_gbps: f64,
+    /// L2 cache hit rate (0.0 to 1.0)
+    pub l2_hit_rate: Option<f64>,
+    /// Memory stall percentage
+    pub stall_pct: Option<f64>,
+    /// Theoretical peak bandwidth (for comparison)
+    pub peak_bandwidth_gbps: f64,
+    /// Bandwidth utilization (0.0 to 1.0)
+    pub utilization: f64,
+}
+
+impl MemoryBandwidthAnalysis {
+    /// Calculate memory bandwidth from operation metadata
+    ///
+    /// # Arguments
+    ///
+    /// * `bytes_read` - Total bytes read from memory
+    /// * `bytes_written` - Total bytes written to memory
+    /// * `duration_secs` - Execution time in seconds
+    /// * `peak_bandwidth_gbps` - Theoretical peak bandwidth in GB/s (default: 560 for RX 7900 XT)
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use rocmforge::profiling::rocprof_integration::MemoryBandwidthAnalysis;
+    ///
+    /// // Analyze a matmul operation
+    /// let analysis = MemoryBandwidthAnalysis::from_operation(
+    ///     1024 * 1024 * 1024, // 1 GB read
+    ///     512 * 1024 * 1024,  // 512 MB written
+    ///     0.01,               // 10ms duration
+    ///     560.0,              // 560 GB/s peak
+    /// );
+    ///
+    /// println!("Bandwidth: {:.2} GB/s", analysis.bandwidth_gbps);
+    /// println!("Utilization: {:.1}%", analysis.utilization * 100.0);
+    /// ```
+    pub fn from_operation(
+        bytes_read: u64,
+        bytes_written: u64,
+        duration_secs: f64,
+        peak_bandwidth_gbps: f64,
+    ) -> Self {
+        let bytes_total = bytes_read + bytes_written;
+        let bandwidth_gbps = if duration_secs > 0.0 {
+            (bytes_total as f64 / 1e9) / duration_secs
+        } else {
+            0.0
+        };
+        let utilization = bandwidth_gbps / peak_bandwidth_gbps;
+
+        MemoryBandwidthAnalysis {
+            bytes_read,
+            bytes_written,
+            bytes_total,
+            duration_secs,
+            bandwidth_gbps,
+            l2_hit_rate: None,
+            stall_pct: None,
+            peak_bandwidth_gbps,
+            utilization,
+        }
+    }
+
+    /// Calculate bandwidth from profiling results
+    pub fn from_profiling_results(
+        results: &ProfilingResults,
+        duration_secs: f64,
+        peak_bandwidth_gbps: f64,
+    ) -> Self {
+        // Estimate bytes transferred from counter data
+        // This is approximate - actual measurements require kernel instrumentation
+
+        // Get cache accesses to estimate memory traffic
+        let cache_accesses = results.get_counter("TCP_TOTAL_CACHE_ACCESSES").unwrap_or(0.0);
+        let cache_misses = results.get_counter("TCP_TOTAL_CACHE_MISSES").unwrap_or(0.0);
+
+        // Estimate: 64 bytes per cache line
+        let bytes_read = (cache_misses * 64.0) as u64;
+        let bytes_written = bytes_read / 2; // Assume 2:1 read:write ratio
+
+        let l2_hit_rate = if cache_accesses > 0.0 {
+            Some((cache_accesses - cache_misses) / cache_accesses)
+        } else {
+            None
+        };
+
+        let bytes_total = bytes_read + bytes_written;
+        let bandwidth_gbps = if duration_secs > 0.0 {
+            (bytes_total as f64 / 1e9) / duration_secs
+        } else {
+            0.0
+        };
+
+        let utilization = bandwidth_gbps / peak_bandwidth_gbps;
+
+        MemoryBandwidthAnalysis {
+            bytes_read,
+            bytes_written,
+            bytes_total,
+            duration_secs,
+            bandwidth_gbps,
+            l2_hit_rate,
+            stall_pct: None,
+            peak_bandwidth_gbps,
+            utilization,
+        }
+    }
+
+    /// Format bytes as human readable
+    pub fn format_bytes(bytes: u64) -> String {
+        const KB: u64 = 1024;
+        const MB: u64 = 1024 * 1024;
+        const GB: u64 = 1024 * 1024 * 1024;
+
+        if bytes >= GB {
+            format!("{:.2} GB", bytes as f64 / GB as f64)
+        } else if bytes >= MB {
+            format!("{:.2} MB", bytes as f64 / MB as f64)
+        } else if bytes >= KB {
+            format!("{:.2} KB", bytes as f64 / KB as f64)
+        } else {
+            format!("{} B", bytes)
+        }
+    }
+
+    /// Get a summary report
+    pub fn summary(&self) -> String {
+        let mut report = String::from("Memory Bandwidth Analysis:\n");
+        report.push_str(&format!("  Bytes Read:        {}\n", Self::format_bytes(self.bytes_read)));
+        report.push_str(&format!("  Bytes Written:     {}\n", Self::format_bytes(self.bytes_written)));
+        report.push_str(&format!("  Total Transfer:    {}\n", Self::format_bytes(self.bytes_total)));
+        report.push_str(&format!("  Duration:          {:.3} ms\n", self.duration_secs * 1000.0));
+        report.push_str(&format!("  Bandwidth:         {:.2} GB/s\n", self.bandwidth_gbps));
+        report.push_str(&format!("  Utilization:       {:.1}%", self.utilization * 100.0));
+
+        if let Some(hit_rate) = self.l2_hit_rate {
+            report.push_str(&format!("  L2 Hit Rate:       {:.1}%\n", hit_rate * 100.0));
+        }
+
+        if let Some(stall) = self.stall_pct {
+            report.push_str(&format!("  Memory Stall:      {:.1}%\n", stall * 100.0));
+        }
+
+        report
+    }
+
+    /// Check if bandwidth utilization is good (>60%)
+    pub fn is_good_utilization(&self) -> bool {
+        self.utilization > 0.6
+    }
+
+    /// Check if bandwidth utilization is excellent (>80%)
+    pub fn is_excellent_utilization(&self) -> bool {
+        self.utilization > 0.8
+    }
+
+    /// Get bottleneck description
+    pub fn bottleneck_description(&self) -> &'static str {
+        if self.utilization < 0.3 {
+            "SEVERE: Memory bandwidth severely underutilized. Check memory access patterns for coalescing."
+        } else if self.utilization < 0.5 {
+            "MODERATE: Memory bandwidth underutilized. Consider cache blocking or shared memory."
+        } else if self.utilization < 0.7 {
+            "FAIR: Memory bandwidth utilization is acceptable. Room for optimization remains."
+        } else {
+            "GOOD: Memory bandwidth utilization is high. Kernel is likely compute-bound."
+        }
+    }
+}
+
+/// Memory access pattern analysis for kernels
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MemoryAccessPattern {
+    /// Sequential access (best case)
+    Sequential,
+    /// Strided access with known stride
+    Strided { stride: usize },
+    /// Random access (worst case)
+    Random,
+    /// Coalesced access across threads
+    Coalesced,
+    /// Uncoalesced access across threads
+    Uncoalesced,
+}
+
+impl MemoryAccessPattern {
+    /// Get expected bandwidth efficiency (0.0 to 1.0) for this pattern
+    pub fn expected_efficiency(&self) -> f64 {
+        match self {
+            MemoryAccessPattern::Sequential => 0.95,
+            MemoryAccessPattern::Coalesced => 0.90,
+            MemoryAccessPattern::Strided { stride } if *stride <= 8 => 0.75,
+            MemoryAccessPattern::Strided { stride } if *stride <= 32 => 0.50,
+            MemoryAccessPattern::Strided { .. } => 0.30,
+            MemoryAccessPattern::Uncoalesced => 0.40,
+            MemoryAccessPattern::Random => 0.20,
+        }
+    }
+
+    /// Get description of the access pattern
+    pub fn description(&self) -> String {
+        match self {
+            MemoryAccessPattern::Sequential => "Sequential access - optimal cache utilization".to_string(),
+            MemoryAccessPattern::Coalesced => "Coalesced access - threads access contiguous memory".to_string(),
+            MemoryAccessPattern::Strided { stride } => {
+                format!("Strided access with stride {} - reduced cache line utilization", stride)
+            }
+            MemoryAccessPattern::Uncoalesced => "Uncoalesced access - each thread accesses different cache line".to_string(),
+            MemoryAccessPattern::Random => "Random access - poor cache utilization".to_string(),
+        }
+    }
+}
+
 /// Quick profiling helpers for common scenarios
 pub mod helpers {
     use super::*;
@@ -801,6 +1027,47 @@ pub mod helpers {
                 "TCP_TOTAL_CACHE_MISSES",
             ])
             .with_category(CounterCategory::Cache);
+
+        RocprofSession::with_config(config)
+    }
+
+    /// Profile memory bandwidth with detailed stall analysis
+    ///
+    /// Includes additional counters for memory stall cycles and latency.
+    pub fn profile_memory_detailed(output_dir: impl AsRef<Path>) -> ProfilingResult<RocprofSession> {
+        let config = ProfilingConfig::new(output_dir)
+            .with_counters(vec![
+                "GRBM_GUI_ACTIVE",
+                "GRBM_COUNT",
+                "TCP_TOTAL_CACHE_ACCESSES",
+                "TCP_TOTAL_CACHE_MISSES",
+                "TCP_TOTAL_HIT_RATE",
+                "SQ_WAVES",
+                "SQ_INSTS_VMEM",
+                "SQ_INSTS_FLAT",
+                "SQ_LDS_IDX_ACTIVE",
+                "SQ_LDS_BANK_ACTIVE",
+            ])
+            .with_category(CounterCategory::Cache)
+            .with_category(CounterCategory::Lds);
+
+        RocprofSession::with_config(config)
+    }
+
+    /// Profile memory bandwidth for matmul operations
+    ///
+    /// Specialized configuration for matrix multiplication kernels.
+    pub fn profile_matmul_memory(output_dir: impl AsRef<Path>) -> ProfilingResult<RocprofSession> {
+        let config = ProfilingConfig::new(output_dir)
+            .with_counters(vec![
+                "GRBM_GUI_ACTIVE",
+                "TCP_TOTAL_CACHE_ACCESSES",
+                "TCP_TOTAL_CACHE_MISSES",
+                "SQ_INSTS_VMEM",
+                "SQ_INSTS_FLAT",
+                "SQ_LDS_BANK_ACTIVE",
+            ])
+            .with_hsa_trace(true);
 
         RocprofSession::with_config(config)
     }

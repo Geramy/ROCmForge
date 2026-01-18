@@ -66,5 +66,5 @@ pub use kernel_timer::{KernelTimer, ScopedTimer};
 pub use rocprof_integration::{
     ProfilingTool, CounterCategory, ProfilingConfig, RocprofSession,
     ProfilingResults, ProfilingMetrics, ProfilingError, KernelExecution,
-    OmniperfProfileBuilder,
+    OmniperfProfileBuilder, MemoryBandwidthAnalysis, MemoryAccessPattern,
 };
