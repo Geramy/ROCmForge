@@ -611,6 +611,90 @@ pub fn dequant_q6_k(tensor: &GgufTensor) -> Result<Vec<f32>> {
     Ok(result)
 }
 
+/// Dequantize Q3_K tensor to FP32
+/// Q3_K uses super-block structure with 256-byte blocks
+/// Format: scales + quants with 3-bit packed values
+pub fn dequant_q3_k(tensor: &GgufTensor) -> Result<Vec<f32>> {
+    let total_elements = tensor.total_elements();
+    let mut result = vec![0.0f32; total_elements];
+    let blocks = total_elements.div_ceil(256);
+
+    for block_idx in 0..blocks {
+        let block_start = block_idx * 256;
+
+        if block_start + 256 > tensor.data.len() {
+            break;
+        }
+
+        // Q3_K super-block structure:
+        // - 32 bytes: 16 half-precision scales (2 bytes each) for 16 sub-blocks
+        // - 4 bytes: qh (high bits for 3-bit quants)
+        // - 160 bytes: 3-bit quantized values (256 * 3 / 8 = 96 bytes, but padded)
+        // - 60 bytes: additional data
+
+        let scales_start = block_start;
+        let qh_start = block_start + 32;
+        let quants_start = block_start + 36;
+
+        // Process each of the 16 sub-blocks (16 elements each)
+        for sub_block_idx in 0..16 {
+            let sub_block_start = block_idx * 256 + sub_block_idx * 16;
+
+            // Get scale for this sub-block
+            let scale_offset = scales_start + sub_block_idx * 2;
+            let scale = if scale_offset + 2 <= tensor.data.len() {
+                let scale_bits = u16::from_le_bytes([
+                    tensor.data[scale_offset],
+                    tensor.data[scale_offset + 1],
+                ]);
+                half::f16::from_bits(scale_bits).to_f32()
+            } else {
+                1.0
+            };
+
+            // Read high bits (qh) - 2 bits per element
+            let qh_offset = qh_start + sub_block_idx / 4;
+            let qh_shift = (sub_block_idx % 4) * 2;
+            let qh = if qh_offset < tensor.data.len() {
+                (tensor.data[qh_offset] >> qh_shift) & 0x03
+            } else {
+                0
+            };
+
+            // Extract 3-bit quantized values for this sub-block (16 values)
+            for i in 0..16 {
+                let element_idx = sub_block_start + i;
+                if element_idx >= total_elements {
+                    break;
+                }
+
+                // 3-bit values packed: 16 values * 3 bits = 48 bits = 6 bytes per sub-block
+                let bit_pos = i * 3;
+                let byte_idx = bit_pos / 8;
+                let bit_offset = bit_pos % 8;
+
+                let quant_offset = quants_start + sub_block_idx * 6 + byte_idx;
+
+                let quant = if quant_offset + 1 < tensor.data.len() {
+                    let combined = ((tensor.data[quant_offset + 1] as u16) << 8)
+                                   | (tensor.data[quant_offset] as u16);
+                    let low_bits = ((combined >> bit_offset) & 0x07) as u8;
+
+                    // Combine with high bits from qh
+                    let high_bit = if i < 8 { (qh >> i) & 1 } else { 0 };
+                    (low_bits | (high_bit << 3)) as i8 as f32 - 4.0
+                } else {
+                    0.0
+                };
+
+                result[element_idx] = quant * scale;
+            }
+        }
+    }
+
+    Ok(result)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
