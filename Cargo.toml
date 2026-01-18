@@ -94,6 +94,10 @@ harness = false
 name = "inference_bench"
 harness = false
 
+[[bench]]
+name = "memory_bench"
+harness = false
+
 # Binaries
 [[bin]]
 name = "inspect_gguf"
