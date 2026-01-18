@@ -23,7 +23,7 @@ pub use optimizer::{GraphOptimizer, OptimizerStats};
 pub use hybrid_scheduler::{
     CapabilityProvider, HybridScheduler, HybridExecutor, ExecutionStrategy,
     OpCapability, OpType, OpCost, BackendSelection, SelectionReason,
-    ExecutionEvent, BackendStats,
+    ExecutionEvent, BackendStats, BackendExecutionSummary,
 };
 
 #[derive(Debug, Clone)]
