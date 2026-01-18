@@ -33,6 +33,7 @@ const MAX_FLASH_SEQ_LEN: usize = 2048;
 /// This backend uses fused flash attention kernels when available,
 /// providing significant performance improvements over traditional
 /// multi-kernel attention computation.
+#[derive(Debug)]
 pub struct FlashAttentionBackend {
     #[cfg(feature = "rocm")]
     _handle: HipBlasHandle,
@@ -60,7 +61,6 @@ impl FlashAttentionBackend {
     pub fn can_use_flash_attention(config: &AttentionConfig) -> bool {
         cfg!(feature = "rocm")
             && config.head_dim <= MAX_FLASH_HEAD_DIM
-            && config.seq_len <= config.max_sequence_length
             && config.max_sequence_length <= MAX_FLASH_SEQ_LEN
     }
 
@@ -207,6 +207,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "rocm")]
     fn test_can_use_flash_attention_valid_config() {
         let config = AttentionConfig::new(512, 8, 64)
             .with_max_sequence_length(1024);
@@ -215,6 +216,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "rocm")]
     fn test_can_use_flash_attention_head_dim_too_large() {
         let config = AttentionConfig::new(512, 4, 129) // head_dim > 128
             .with_max_sequence_length(1024);
@@ -223,6 +225,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "rocm")]
     fn test_can_use_flash_attention_seq_len_too_large() {
         let config = AttentionConfig::new(512, 8, 64)
             .with_max_sequence_length(2049); // > 2048

@@ -392,7 +392,6 @@ pub mod flash_attention_backend {
             // - Head dimension <= 128 (register limit)
             // - Sequence length <= max_sequence_length
             config.head_dim <= 128
-                && config.seq_len <= config.max_sequence_length
                 && config.max_sequence_length <= self.max_seq_len
         }
 

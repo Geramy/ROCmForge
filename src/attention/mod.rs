@@ -6,6 +6,7 @@ pub mod backend_registry;
 pub mod compare;
 pub mod compute;
 pub mod cpu;
+pub mod flash_attention;
 pub mod gpu;
 pub mod kernels;
 pub mod mask;
