@@ -1,8 +1,17 @@
 /**
  * q4_0_matmul.hip - Fused Q4_0 Dequantization + MatMul Kernel
  *
- * GPU: AMD Radeon RX 7900 XT (gfx1100, RDNA3, wave32)
- * Block size: 256 threads (8 waves of 32 threads)
+ * Tunable kernel optimized for AMD GPU architectures:
+ * - RDNA3 (gfx1100): Wave32, 256 threads/block
+ * - RDNA2 (gfx1030): Wave32, 256 threads/block
+ * - CDNA2 (gfx90a): Wave64, 512 threads/block
+ *
+ * Tuning Parameters (configurable via preprocessor defines):
+ * - BLOCK_SIZE: Threads per block (default: 256)
+ * - WARP_SIZE: Wavefront size (default: 32 for RDNA, 64 for CDNA)
+ * - TILE_SIZE_K: K dimension tile size (default: 32)
+ * - TILE_SIZE_N: N dimension tile size (default: 32)
+ * - USE_LDS: Enable Local Data Share optimization (default: 1)
  *
  * Implements fused dequantization + matrix multiplication for Q4_0 format.
  * This is the key innovation for inference efficiency - we don't materialize
@@ -26,15 +35,37 @@
 
 #include <hip/hip_runtime.h>
 
-// RDNA3 tuning constants
-constexpr int BLOCK_SIZE = 256;  // 8 waves of 32 threads
-constexpr int WARP_SIZE = 32;     // RDNA3 wavefront size
+// Default tuning constants (can be overridden at compile time)
+#ifndef BLOCK_SIZE
+    #define BLOCK_SIZE 256  // Default: 8 waves of 32 threads (RDNA3)
+#endif
+
+#ifndef WARP_SIZE
+    #define WARP_SIZE 32    // Default: RDNA3 wavefront size
+#endif
+
+#ifndef TILE_SIZE_K
+    #define TILE_SIZE_K 32  // K dimension tile size
+#endif
+
+#ifndef TILE_SIZE_N
+    #define TILE_SIZE_N 32  // N dimension tile size
+#endif
+
+#ifndef USE_LDS
+    #define USE_LDS 1       // Enable LDS optimization by default
+#endif
 
 // Q4_0 block size in bytes
 constexpr int Q4_0_BLOCK_SIZE = 20;  // 4 bytes scale + 16 bytes packed data
 
 // Elements per Q4_0 block
 constexpr int Q4_0_ELEMENTS_PER_BLOCK = 32;
+
+// LDS tile size (when USE_LDS is enabled)
+#if USE_LDS
+    constexpr int LDS_TILE_SIZE = TILE_SIZE_K * TILE_SIZE_N;
+#endif
 
 /**
  * Unpack 4-bit Q4_0 value
@@ -66,19 +97,56 @@ __device__ __forceinline__ float unpack_q4_0_value(const uint8_t* data, int elem
 }
 
 /**
- * Fused Q4_0 dequantization + matrix multiplication kernel
+ * Wave32 reduction for RDNA architectures
+ *
+ * Uses wave-level reduction for efficient partial sum accumulation.
+ * RDNA3/RDNA2 use wave32 (32 threads per wave).
+ */
+__device__ __forceinline__ float wave_reduce_sum(float partial) {
+#if WARP_SIZE == 32
+    // RDNA3/RDNA2: Use native wave32 reduction
+    // Use __shfl_down for intra-wave communication
+    #if __HIP_DEVICE_COMPILE__
+        // HIP builtin for wave reduction
+        partial = __builtin_amdgcn_wave_reduce_fadd(partial);
+    #else
+        // Fallback: manual reduction
+        for (int stride = 16; stride > 0; stride >>= 1) {
+            partial += __shfl_down_f32(partial, stride, WARP_SIZE);
+        }
+    #endif
+#else
+    // CDNA: Use wave64 reduction
+    #if __HIP_DEVICE_COMPILE__
+        partial = __builtin_amdgcn_wave_reduce_fadd(partial);
+    #else
+        for (int stride = 32; stride > 0; stride >>= 1) {
+            partial += __shfl_down_f32(partial, stride, WARP_SIZE);
+        }
+    #endif
+#endif
+    return partial;
+}
+
+/**
+ * Fused Q4_0 dequantization + matrix multiplication kernel with LDS optimization
  *
  * Computes output[m, n] = sum(activation[m, k] * dequantized_weight[k, n])
  * where dequantized_weight is computed on-the-fly from Q4_0 format.
  *
  * Grid strategy: One block per output row (M dimension)
  * - Each block computes one full row of the output [1 x N]
- * - Threads within block collaborate on dot products via wave32 reduction
+ * - Threads within block collaborate on dot products via wave-level reduction
  *
- * Block strategy: 256 threads for efficient reduction
- * - Threads iterate over K dimension in chunks of 256
+ * Block strategy: Tunable threads for efficient reduction
+ * - Threads iterate over K dimension in tiles of TILE_SIZE_K
  * - Each iteration: loads activation, dequantizes weight, multiplies, reduces
- * - Wave-level reduction combines partials from 32 threads
+ * - Wave-level reduction combines partials from WARP_SIZE threads
+ *
+ * LDS Optimization (when USE_LDS=1):
+ * - Loads frequently accessed weight tiles into LDS
+ * - Reduces global memory access pressure
+ * - Improves performance for larger matrices
  *
  * Memory access pattern:
  * - Activations: Coalesced reads (contiguous threads read contiguous memory)
@@ -86,7 +154,6 @@ __device__ __forceinline__ float unpack_q4_0_value(const uint8_t* data, int elem
  *
  * @param activations  Input tensor [M x K] in row-major (FP32)
  * @param weights_q4_0 Quantized weights [K x N] in row-major (Q4_0 format)
- *                     Note: stored column-major for efficient access
  * @param output       Output tensor [M x N] in row-major (FP32)
  * @param m            Batch/sequence dimension (rows in activation/output)
  * @param n            Output dimension (columns in output/weight)
@@ -102,20 +169,23 @@ extern "C" __global__ void q4_0_matmul_kernel(
 ) {
     // Block indexing: each block handles one row of output
     const int m_idx = blockIdx.x;  // Row index (0 to M-1)
-    const int tid = threadIdx.x;   // Thread index in block (0 to 255)
+    const int tid = threadIdx.x;   // Thread index in block
 
     // Bounds check
     if (m_idx >= m) {
         return;
     }
 
-    // Shared memory for wave32 reduction
-    __shared__ float s_partial[BLOCK_SIZE];
+#if USE_LDS
+    // LDS cache for weight tiles
+    __shared__ float s_weight_tile[TILE_SIZE_K * TILE_SIZE_N];
+    __shared__ float s_activation_tile[TILE_SIZE_K];
+#endif
 
     // Activation row for this m_idx (start of row)
     const int activation_row_offset = m_idx * k;
 
-    // Process n output columns in chunks (256 threads can handle multiple columns)
+    // Process n output columns in chunks
     // Each thread handles multiple output columns for efficiency
     const int columns_per_thread = (n + BLOCK_SIZE - 1) / BLOCK_SIZE;
     const int n_start = tid * columns_per_thread;
@@ -128,45 +198,71 @@ extern "C" __global__ void q4_0_matmul_kernel(
     }
 
     // Iterate over K dimension (the dot product dimension)
-    // Process 256 elements at a time for efficient memory access
-    for (int k_base = 0; k_base < k; k_base += BLOCK_SIZE) {
+    // Process TILE_SIZE_K elements at a time for efficient memory access
+    for (int k_base = 0; k_base < k; k_base += TILE_SIZE_K) {
         // Each thread processes one element of K chunk
-        const int k_idx = k_base + tid;
-        if (k_idx >= k) {
-            s_partial[tid] = 0.0f;
-        } else {
-            // Load activation value (coalesced read - all threads read contiguous)
+        const int k_tile_size = min(TILE_SIZE_K, k - k_base);
+
+        for (int k_tile = 0; k_tile < k_tile_size; ++k_tile) {
+            const int k_idx = k_base + k_tile;
+
+            // Load activation value (coalesced read)
             const float activation = activations[activation_row_offset + k_idx];
 
-            // For each output column, dequantize weight and accumulate
+#if USE_LDS
+            // Load weight tile into LDS (cooperative load by all threads)
+            // Each thread loads one weight value into LDS
             for (int col = n_start; col < n_end; ++col) {
-                // Calculate weight position in Q4_0 format
-                // Weights stored as [K x N] in Q4_0 blocks
-                // For weight[k_idx, col], we need:
-                // - Block index: (k_idx * N + col) / 32
-                // - Element in block: (k_idx * N + col) % 32
-
                 const int weight_linear_idx = k_idx * n + col;
                 const int block_idx = weight_linear_idx / Q4_0_ELEMENTS_PER_BLOCK;
                 const int element_in_block = weight_linear_idx % Q4_0_ELEMENTS_PER_BLOCK;
 
-                // Read Q4_0 block
                 const int block_offset = block_idx * Q4_0_BLOCK_SIZE;
                 const float scale = *reinterpret_cast<const float*>(weights_q4_0 + block_offset);
                 const uint8_t* quant_data = weights_q4_0 + block_offset + 4;
 
-                // Dequantize weight on-the-fly
                 const float quant_value = unpack_q4_0_value(quant_data, element_in_block);
                 const float weight = scale * quant_value;
 
-                // Accumulate
-                accumulators[col - n_start] += activation * weight;
+                // Store in LDS tile (indexed by tile position)
+                const int lds_idx = k_tile * TILE_SIZE_N + (col - n_start);
+                if (lds_idx < LDS_TILE_SIZE) {
+                    s_weight_tile[lds_idx] = weight;
+                }
             }
 
-            // Store partial for synchronization
-            s_partial[tid] = 1.0f;  // Signal that we processed this k_idx
+            // Store activation in LDS
+            if (tid < TILE_SIZE_K) {
+                s_activation_tile[k_tile] = activation;
+            }
+            __syncthreads();
+
+            // Compute matmul using cached values in LDS
+            for (int col = n_start; col < n_end; ++col) {
+                const int lds_idx = k_tile * TILE_SIZE_N + (col - n_start);
+                if (lds_idx < LDS_TILE_SIZE) {
+                    accumulators[col - n_start] += s_activation_tile[k_tile] * s_weight_tile[lds_idx];
+                }
+            }
+            __syncthreads();
+#else
+            // Direct computation without LDS (for small matrices or low-LDS GPUs)
+            for (int col = n_start; col < n_end; ++col) {
+                const int weight_linear_idx = k_idx * n + col;
+                const int block_idx = weight_linear_idx / Q4_0_ELEMENTS_PER_BLOCK;
+                const int element_in_block = weight_linear_idx % Q4_0_ELEMENTS_PER_BLOCK;
+
+                const int block_offset = block_idx * Q4_0_BLOCK_SIZE;
+                const float scale = *reinterpret_cast<const float*>(weights_q4_0 + block_offset);
+                const uint8_t* quant_data = weights_q4_0 + block_offset + 4;
+
+                const float quant_value = unpack_q4_0_value(quant_data, element_in_block);
+                const float weight = scale * quant_value;
+
+                accumulators[col - n_start] += activation * weight;
+            }
+#endif
         }
-        __syncthreads();
     }
 
     // Write results to output
@@ -181,9 +277,10 @@ extern "C" __global__ void q4_0_matmul_kernel(
  *
  * Simplified version: Each block computes exactly ONE output element.
  * Grid: (N, M, 1) - one block per output element
- * Block: 256 threads for wave-level reduction
+ * Block: BLOCK_SIZE threads for wave-level reduction
  *
  * This is simpler but launches more blocks. Use for smaller matrices.
+ * Optimized for wave32/wave64 reduction.
  *
  * @param activations  Input tensor [M x K] in row-major (FP32)
  * @param weights_q4_0 Quantized weights [K x N] in row-major (Q4_0 format)
@@ -203,14 +300,14 @@ extern "C" __global__ void q4_0_matmul_element_kernel(
     // Block indexing: each block handles one output element [m, n]
     const int n_idx = blockIdx.x;  // Column index (0 to N-1)
     const int m_idx = blockIdx.y;  // Row index (0 to M-1)
-    const int tid = threadIdx.x;   // Thread index in block (0 to 255)
+    const int tid = threadIdx.x;   // Thread index in block
 
     // Bounds check
     if (m_idx >= m || n_idx >= n) {
         return;
     }
 
-    // Shared memory for wave32 reduction
+    // Shared memory for wave-level reduction
     __shared__ float s_partial[WARP_SIZE];
 
     // Activation row for this m_idx
@@ -219,63 +316,103 @@ extern "C" __global__ void q4_0_matmul_element_kernel(
     // Each thread computes partial dot product
     float partial_sum = 0.0f;
 
-    // Iterate over K dimension (256 elements per iteration)
-    for (int k_base = 0; k_base < k; k_base += BLOCK_SIZE) {
-        const int k_idx = k_base + tid;
-        if (k_idx < k) {
-            // Load activation
-            const float activation = activations[activation_row_offset + k_idx];
+    // Iterate over K dimension
+    // Process TILE_SIZE_K elements per iteration
+    for (int k_base = 0; k_base < k; k_base += TILE_SIZE_K) {
+        const int k_tile_size = min(TILE_SIZE_K, k - k_base);
 
-            // Dequantize weight[k_idx, n_idx] on-the-fly
-            const int weight_linear_idx = k_idx * n + n_idx;
-            const int block_idx = weight_linear_idx / Q4_0_ELEMENTS_PER_BLOCK;
-            const int element_in_block = weight_linear_idx % Q4_0_ELEMENTS_PER_BLOCK;
+        for (int k_tile = 0; k_tile < k_tile_size; ++k_tile) {
+            const int k_idx = k_base + k_tile;
 
-            const int block_offset = block_idx * Q4_0_BLOCK_SIZE;
-            const float scale = *reinterpret_cast<const float*>(weights_q4_0 + block_offset);
-            const uint8_t* quant_data = weights_q4_0 + block_offset + 4;
+            // Check if this thread should process this k element
+            // Distribute work across threads in the block
+            if ((k_idx % BLOCK_SIZE) == tid) {
+                // Load activation
+                const float activation = activations[activation_row_offset + k_idx];
 
-            const float quant_value = unpack_q4_0_value(quant_data, element_in_block);
-            const float weight = scale * quant_value;
+                // Dequantize weight[k_idx, n_idx] on-the-fly
+                const int weight_linear_idx = k_idx * n + n_idx;
+                const int block_idx = weight_linear_idx / Q4_0_ELEMENTS_PER_BLOCK;
+                const int element_in_block = weight_linear_idx % Q4_0_ELEMENTS_PER_BLOCK;
 
-            partial_sum += activation * weight;
+                const int block_offset = block_idx * Q4_0_BLOCK_SIZE;
+                const float scale = *reinterpret_cast<const float*>(weights_q4_0 + block_offset);
+                const uint8_t* quant_data = weights_q4_0 + block_offset + 4;
+
+                const float quant_value = unpack_q4_0_value(quant_data, element_in_block);
+                const float weight = scale * quant_value;
+
+                partial_sum += activation * weight;
+            }
         }
     }
 
-    // Wave32 reduction
-    // Each group of 32 threads reduces their partials
-    const int lane_id = tid & (WARP_SIZE - 1);  // tid % 32
-    const int warp_id = tid / WARP_SIZE;
+    // Wave-level reduction using wave32 or wave64
+    const int lane_id = tid & (WARP_SIZE - 1);  // tid % WARP_SIZE
 
-    // Store partial for this warp lane
+    // Store partial for this wave lane
     s_partial[lane_id] = partial_sum;
     __syncthreads();
 
-    // Only first 32 threads participate in reduction
-    if (lane_id < 16) {
-        s_partial[lane_id] += s_partial[lane_id + 16];
-    }
-    __syncthreads();
+    // Tree reduction optimized for WARP_SIZE
+    if (WARP_SIZE == 32) {
+        // Wave32 reduction (RDNA2/RDNA3)
+        if (lane_id < 16) {
+            s_partial[lane_id] += s_partial[lane_id + 16];
+        }
+        __syncthreads();
 
-    if (lane_id < 8) {
-        s_partial[lane_id] += s_partial[lane_id + 8];
-    }
-    __syncthreads();
+        if (lane_id < 8) {
+            s_partial[lane_id] += s_partial[lane_id + 8];
+        }
+        __syncthreads();
 
-    if (lane_id < 4) {
-        s_partial[lane_id] += s_partial[lane_id + 4];
-    }
-    __syncthreads();
+        if (lane_id < 4) {
+            s_partial[lane_id] += s_partial[lane_id + 4];
+        }
+        __syncthreads();
 
-    if (lane_id < 2) {
-        s_partial[lane_id] += s_partial[lane_id + 2];
-    }
-    __syncthreads();
+        if (lane_id < 2) {
+            s_partial[lane_id] += s_partial[lane_id + 2];
+        }
+        __syncthreads();
 
-    if (lane_id < 1) {
-        s_partial[lane_id] += s_partial[lane_id + 1];
+        if (lane_id < 1) {
+            s_partial[lane_id] += s_partial[lane_id + 1];
+        }
+        __syncthreads();
+    } else {
+        // Wave64 reduction (CDNA2/CDNA3)
+        if (lane_id < 32) {
+            s_partial[lane_id] += s_partial[lane_id + 32];
+        }
+        __syncthreads();
+
+        if (lane_id < 16) {
+            s_partial[lane_id] += s_partial[lane_id + 16];
+        }
+        __syncthreads();
+
+        if (lane_id < 8) {
+            s_partial[lane_id] += s_partial[lane_id + 8];
+        }
+        __syncthreads();
+
+        if (lane_id < 4) {
+            s_partial[lane_id] += s_partial[lane_id + 4];
+        }
+        __syncthreads();
+
+        if (lane_id < 2) {
+            s_partial[lane_id] += s_partial[lane_id + 2];
+        }
+        __syncthreads();
+
+        if (lane_id < 1) {
+            s_partial[lane_id] += s_partial[lane_id + 1];
+        }
+        __syncthreads();
     }
-    __syncthreads();
 
     // Thread 0 writes the result
     if (tid == 0) {

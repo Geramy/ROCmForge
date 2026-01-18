@@ -2,6 +2,9 @@
 
 pub mod buffer;
 pub mod ops;
+pub mod tuning;
+
+pub use tuning::{GpuArchitecture, KernelTuning};
 
 use crate::backend::HipBackend;
 use crate::ggml::{allocator::TensorAllocator, GgmlBackend, GgmlError, GgmlResult, Op, TensorDesc, TensorId, DType};
