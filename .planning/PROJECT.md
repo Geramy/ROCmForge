@@ -2,91 +2,89 @@
 
 ## What This Is
 
-AMD GPU inference engine for Large Language Models using ROCm and HIP. Provides LLM inference capabilities on AMD hardware with GPU-accelerated kernels and ggml-style IR for efficient execution.
+A high-performance LLM inference engine for AMD GPUs, written in Rust. ROCmForge loads GGUF-format models and runs them on ROCm/HIP with optimized CPU fallback using SIMD. It provides an OpenAI-compatible HTTP API for seamless integration with existing LLM applications.
 
 ## Core Value
 
-**Performance parity with llama.cpp on AMD GPUs.** The ggml IR must execute efficiently on AMD hardware (RX 7900 XT / gfx1100 target), with token generation speed matching reference implementations while maintaining clean architecture.
+**Reliable, fast inference on AMD GPUs with transparent CPU fallback.**
+
+If ROCm is available, use it. If not, fall back to optimized CPU execution seamlessly. Any GGUF model should just work.
 
 ## Requirements
 
 ### Validated
 
-<!-- Shipped and confirmed valuable. -->
+*Capabilities that exist and work (inferred from existing codebase):*
 
-- ✓ GPU Kernels (Phases 1-4) — scale, mask, softmax, RoPE, FlashAttention, SwiGLU, RMSNorm
-- ✓ GGUF Loader — F32, F16, Q8_0, Q4_0, MXFP4/MXFP6 support
-- ✓ MXFP Quantization (Phase 5) — OCP MX Spec v1.0
-- ✓ KV Cache — Paged attention cache
-- ✓ HTTP Server — OpenAI-compatible API
-- ✓ Async GPU Loading (Phase 17) — Multi-stream concurrent uploads
+- ✓ GGUF model loading — `src/loader/gguf.rs` (2832 lines, functional)
+- ✓ HuggingFace tokenizer integration — `src/tokenizer.rs`
+- ✓ OpenAI-compatible HTTP API with SSE streaming — `src/http/server.rs`
+- ✓ Token sampling (top-k, top-p, temperature) — `src/sampler/`
+- ✓ Multi-head attention (CPU backend) — `src/attention/`
+- ✓ Paged KV cache — `src/kv_cache/`
+- ✓ Basic tensor operations — `src/tensor/`
+- ✓ GPU kernels: matmul, softmax, rope, swiglu — `src/ggml/hip_backend/ops/`
+- ✓ CLI tools: serve, generate, inspect — `src/bin/rocmforge_cli.rs`
+- ✓ Model configs: LLaMA, Qwen — `src/model/config.rs`
 
 ### Active
 
-<!-- Current scope. Building toward these. -->
+*What we're building toward:*
 
-- [ ] Fix graph rebuilding every token — Use fixed-shape tensors with offset views
-- [ ] Add quantized matmul ops — Q4_0, Q8_0 dequantization in ggml IR
-- [ ] Single-pass GGUF loading — Parse once, reuse for config and weights
-- [ ] Bind weights once — Separate static weight graphs from dynamic decode graphs
-- [ ] Complete missing ggml ops — Accumulate, quantized matmul variants
-- [ ] End-to-end integration tests — Real model validation
+- [ ] Fix inference hangs (GPU stream synchronization bug)
+- [ ] Complete quantized matmul with native HIP dequantization kernel
+- [ ] Implement flash attention detection and GPU kernels
+- [ ] Add CPU SIMD backend for all tensor operations
+- [ ] Hybrid execution scheduler (automatic CPU/GPU op selection)
+- [ ] Universal GGUF compatibility (all architectures, quantizations)
+- [ ] Performance optimization (balanced: throughput, latency, memory)
+- [ ] Production-ready reliability and error handling
 
 ### Out of Scope
 
-<!-- Explicit boundaries. Includes reasoning to prevent re-adding. -->
-
-- Multi-GPU support — Focus on single-GPU efficiency first
-- HTTP server optimization — Existing server functional, defer tuning
-- New model architectures — Focus on existing LLaMA/Qwen2/GLM support
-- Production deployment — Alpha software, testing focus only
+- **Training features** (LoRA adapters, fine-tuning, training modes) — Focus is inference-only
+- **Non-text modalities** (vision, audio, multimodal models) — Text-only for v1
+- **Multi-GPU/distributed execution** — Single GPU focus for v1
+- **Non-AMD GPU support** — ROCm/HIP only (CPU fallback covers non-GPU systems)
 
 ## Context
 
 **Existing Codebase State:**
-- Alpha software, Phase 26 (GQA Scaffolding)
-- ~50 compiler warnings remaining
-- 6 test files have compilation errors
-- End-to-end inference not fully tested
+- Monolithic Rust application with layered architecture (API → Service → Engine → Data → Kernel)
+- 96 test files with good coverage, but 20+ tests commented out pending API rewrite
+- 3 files exceed 3000 LOC (execution_plan.rs, hip_backend.rs, gguf.rs) — modularization needed
+- Known GPU synchronization bugs causing inference hangs (hipBLAS vs hipMemcpy stream mismatch)
+- Transition in progress: eprintln! → tracing for logging
 
-**Recent Analysis (2026-01-14):**
-See: `docs/CLI_AND_MODEL_LOADING_ANALYSIS.md`
+**Technical Environment:**
+- Rust 2021 edition with Tokio async runtime
+- ROCm/HIP for AMD GPU (targeting gfx1100 / RX 7900 XT, broader support goal)
+- Axum web framework for HTTP API
+- GGUF format for model weights (llama.cpp compatibility)
 
-Identified critical issues:
-1. Triple GGUF parsing — wasteful startup overhead
-2. Graph shape mutation every decode token — O(tokens) rebuilds instead of O(1) updates
-3. Weights bound per-decode-step — unnecessary overhead
-4. Missing quantization ops — Q4_0/Q8_0 matmul kernels
-5. Inefficient KV cache access — View reshaping vs offset-based
-
-**ggml IR Status:**
-- Core IR complete (Graph, Node, TensorDesc, Op enum, Layout)
-- HIP backend implements ~20 operations
-- Missing: Quantized matmul, Accumulate op, tensor pool/allocator, graph optimizer
-
-**Reference:**
-- llama.cpp source at `/home/feanor/Projects/llama.cpp`
-- GGUF spec: `ggml/include/gguf.h`
-- ggml ops: `ggml/include/ggml.h`
+**Known Issues (from CONCERNS.md):**
+- GPU stream synchronization bug in `src/ggml/hip_backend/ops/matmul.rs`
+- Race condition in inference loop spawn
+- Engine cleanup issues in CLI
+- Missing .env.example for environment variables
 
 ## Constraints
 
-- **Hardware**: AMD GPU (RX 7900 XT / gfx1100 target) — ROCm 5.x+ required
-- **Platform**: Linux only — ROCm requirement
-- **Memory**: 16GB+ recommended for 7B models
-- **Implementation**: Follow llama.cpp patterns — Reference proven approach
-- **Compatibility**: Maintain existing CLI functionality — No breaking changes
+- **Platform**: ROCm on Linux only — AMD GPU driver limitation
+- **Model Format**: GGUF only — Leverage llama.cpp ecosystem
+- **Hardware**: AMD GPU or CPU SIMD — No NVIDIA, no other accelerators
+- **Architecture**: Single binary, self-contained — No external runtime dependencies beyond ROCm
 
 ## Key Decisions
 
-<!-- Decisions that constrain future work. Add throughout project lifecycle. -->
-
 | Decision | Rationale | Outcome |
 |----------|-----------|---------|
-| Use ggml IR architecture | Proven by llama.cpp, clean separation of concerns | — Pending |
-| Fixed-shape tensors with offsets | Avoid O(tokens) graph rebuilds | — Pending |
-| Single-pass GGUF loading | Eliminate redundant parsing overhead | — Pending |
-| Quantized ops in ggml backend | Follow llama.cpp quantization strategy | — Pending |
+| Rust implementation | Performance, safety, GPU FFI control | — Pending |
+| GGUF format only | llama.cpp ecosystem compatibility | — Pending |
+| Hybrid CPU/GPU execution | Maximum compatibility, graceful degradation | — Pending |
+| OpenAI-compatible API | Drop-in replacement for existing apps | — Pending |
+| Modular architecture with trait backends | Easy CPU/GPU switching, testability | — Pending |
 
 ---
-*Last updated: 2026-01-14 after initialization*
+
+*Last updated: 2026-01-18 after initialization*
