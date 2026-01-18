@@ -5,16 +5,16 @@
 See: .planning/PROJECT.md (updated 2026-01-18)
 
 **Core value:** Reliable, fast inference on AMD GPUs with transparent CPU fallback.
-**Current focus:** Phase 4 — CPU SIMD Backend (Planning)
+**Current focus:** Phase 4 — CPU SIMD Backend
 
 ## Current Position
 
 Phase: 4 of 10 (CPU SIMD Backend)
-Plan: 1 of 4
+Plan: 2 of 4
 Status: In progress
-Last activity: 2026-01-18 — Completed 04-01-PLAN.md (SIMD Strategy)
+Last activity: 2026-01-18 — Completed 04-02-PLAN.md (CPU SIMD Primitives)
 
-Progress: ████████░░ 52% (Phases 1-3 complete, Phase 4: 1/4 plans)
+Progress: ████████░░ 55% (Phases 1-3 complete, Phase 4: 2/4 plans)
 
 **Phase 3 Status:** ✅ Complete
 - 03-01: Complete - Created execution_plan/ directory with architecture.rs, layer_plan.rs, ggml_plan.rs
@@ -22,18 +22,18 @@ Progress: ████████░░ 52% (Phases 1-3 complete, Phase 4: 1/4 
 - 03-03: Complete - Split gguf.rs into 5 modules (mxfp.rs, tensor_type.rs, metadata.rs, gguf_tensor.rs, dequant.rs)
 - 03-04: Complete - Consolidated test fixtures (tests/common/fixtures.rs, tempfile_helpers.rs)
 
-**Phase 4 Status:** 🔄 In Progress (1/4 plans)
+**Phase 4 Status:** 🔄 In Progress (2/4 plans)
 - 04-01: Complete - SIMD strategy selection (std::simd, MSRV 1.82+, 4-8x expected speedup)
-- 04-02: Pending - CPU SIMD primitives (matmul, feature detection)
+- 04-02: Complete - CPU SIMD primitives (matmul, tiled algorithm, 7/7 tests passing)
 - 04-03: Pending - Attention optimization (softmax, QK^T, weighted sum)
 - 04-04: Pending - Backend integration (CpuBackend trait, SIMD backend)
 
 ## Performance Metrics
 
 **Velocity:**
-- Total plans completed: 13
-- Average duration: ~2.08 hours/plan (including testing)
-- Total execution time: ~27.2 hours
+- Total plans completed: 14
+- Average duration: ~2.02 hours/plan (including testing)
+- Total execution time: ~28.3 hours
 
 **By Phase:**
 
@@ -42,11 +42,11 @@ Progress: ████████░░ 52% (Phases 1-3 complete, Phase 4: 1/4 
 | 1 (Critical Bug Fixes) | 3 | ~9 hours | ~3 hours |
 | 2 (Test Infrastructure) | 4 | ~13 hours | ~3.25 hours |
 | 3 (Codebase Modularization) | 4 | ~5 hours | ~1.25 hours |
-| 4 (CPU SIMD Backend) | 1 | ~0.2 hours | ~0.2 hours |
+| 4 (CPU SIMD Backend) | 2 | ~0.75 hours | ~0.38 hours |
 
 **Recent Trend:**
-- Last 5 plans: 02-04, 03-01, 03-02, 03-03, 03-04, 04-01
-- Trend: Fast execution on research/documentation plan
+- Last 6 plans: 02-04, 03-01, 03-02, 03-03, 03-04, 04-01, 04-02
+- Trend: Fast execution on SIMD implementation plans
 
 *Updated after each plan completion*
 
@@ -326,6 +326,44 @@ Resume file: None
 ### Key Finding
 
 The plan originally recommended `packed_simd`, but research revealed this crate is deprecated. Rust 1.82.0 (November 2024) stabilized `std::simd`, providing equivalent functionality without external dependencies.
+
+## Phase 4 Plan 2 Summary
+
+**Completed:** 2026-01-18
+**Duration:** 45 min
+
+### Accomplishments
+
+1. **CPU SIMD Module Created** - Implemented `src/backend/cpu/simd.rs` with std::simd matmul
+2. **Architecture Detection** - Compile-time cfg for x86_64 (f32x8 AVX2) and aarch64 (f32x4 NEON)
+3. **Feature Flag Added** - Optional `simd` feature requires nightly Rust (portable_simd gate)
+4. **All Tests Passing** - 7/7 tests with proper floating-point tolerance
+
+### Commits
+
+- `a3764a4`: feat(04-02): implement CPU SIMD backend with std::simd
+
+### Decisions Made
+
+- **Use nightly feature gate** - std::simd still requires `portable_simd` feature even in Rust 1.82+
+- **Make SIMD optional** - `--features simd` flag, code compiles on stable without it
+- **Relative + absolute tolerance** - SIMD floating-point results differ slightly due to operation reordering
+
+### Files Created/Modified
+
+- `src/backend/cpu/mod.rs` - CPU module with conditional SIMD exports
+- `src/backend/cpu/simd.rs` - SIMD matmul (496 LOC)
+- `Cargo.toml` - Added `rust-version = "1.82"` and `simd` feature
+- `src/lib.rs` - Added conditional feature gate
+- `src/backend/mod.rs` - Added conditional cpu module
+
+### Implementation Details
+
+| Function | Purpose |
+|----------|---------|
+| `simd_matmul_f32` | Basic SIMD matmul with unaligned dimension support |
+| `simd_matmul_tiled_f32` | Cache-efficient tiled matmul (32-element tiles) |
+| `scalar_matmul_f32` | Reference implementation for validation |
 
 ---
 
