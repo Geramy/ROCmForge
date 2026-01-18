@@ -435,10 +435,17 @@ async fn run_local_generate(
     }
     // BUG #1 FIX: Explicit engine cleanup before dropping
     // The inference loop task is spawned in run_inference_loop() and runs in the background.
-    // We call stop() to signal the loop to exit gracefully, then sleep briefly to allow
-    // the task to finish. This prevents GPU resource leaks from abruptly terminated tasks.
+    // We call stop() to signal the loop to exit gracefully, then sleep to allow the task to finish.
+    // This prevents GPU resource leaks from abruptly terminated tasks.
+    //
+    // NOTE: 500ms timeout allows the inference loop to exit gracefully. The loop checks
+    // is_running flag every batch_timeout (default 10ms) plus processing time, so 500ms is
+    // more than sufficient. If GPU memory leaks persist, consider implementing task join
+    // with explicit handle (see Phase 10 - Production Hardening).
+    eprintln!("[cleanup] stopping engine and waiting for inference loop to exit...");
     engine.stop().await.ok();
-    tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+    tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
+    eprintln!("[cleanup] engine shutdown complete");
     Ok(())
 }
 
@@ -521,10 +528,17 @@ async fn run_local_stream(
     }
     // BUG #1 FIX: Explicit engine cleanup before dropping
     // The inference loop task is spawned in run_inference_loop() and runs in the background.
-    // We call stop() to signal the loop to exit gracefully, then sleep briefly to allow
-    // the task to finish. This prevents GPU resource leaks from abruptly terminated tasks.
+    // We call stop() to signal the loop to exit gracefully, then sleep to allow the task to finish.
+    // This prevents GPU resource leaks from abruptly terminated tasks.
+    //
+    // NOTE: 500ms timeout allows the inference loop to exit gracefully. The loop checks
+    // is_running flag every batch_timeout (default 10ms) plus processing time, so 500ms is
+    // more than sufficient. If GPU memory leaks persist, consider implementing task join
+    // with explicit handle (see Phase 10 - Production Hardening).
+    eprintln!("[cleanup] stopping engine and waiting for inference loop to exit...");
     engine.stop().await.ok();
-    tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+    tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
+    eprintln!("[cleanup] engine shutdown complete");
     Ok(())
 }
 
