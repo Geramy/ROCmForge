@@ -3,10 +3,13 @@
 use serde::{Deserialize, Serialize};
 
 /// Model type enumeration
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ModelType {
     Llama,
     Qwen,
+    Mistral,
+    Yi,
+    Mixtral,
 }
 
 /// Configuration for transformer model runtime
@@ -188,5 +191,119 @@ impl ModelConfig {
             rms_norm_eps: 1e-6,
             use_rotary_embeddings: true,
         }
+    }
+
+    /// Create default Mistral configuration
+    pub fn default_mistral() -> Self {
+        Self {
+            num_hidden_layers: 32,
+            num_attention_heads: 32,
+            num_kv_heads: Some(8), // GQA
+            head_dim: 128,
+            hidden_size: 4096,
+            max_position_embeddings: 32768,
+            intermediate_size: 14336,
+            vocab_size: 32000,
+            model_type: ModelType::Mistral,
+            rms_norm_eps: 1e-5,
+            use_rotary_embeddings: true,
+        }
+    }
+
+    /// Create default Yi configuration
+    pub fn default_yi() -> Self {
+        Self {
+            num_hidden_layers: 24,
+            num_attention_heads: 20,
+            num_kv_heads: Some(4), // GQA
+            head_dim: 128,
+            hidden_size: 2560, // num_attention_heads * head_dim = 20 * 128
+            max_position_embeddings: 4096,
+            intermediate_size: 5632,
+            vocab_size: 64000,
+            model_type: ModelType::Yi,
+            rms_norm_eps: 1e-5,
+            use_rotary_embeddings: true,
+        }
+    }
+
+    /// Create default Mixtral configuration (MoE)
+    pub fn default_mixtral() -> Self {
+        Self {
+            num_hidden_layers: 32,
+            num_attention_heads: 32,
+            num_kv_heads: Some(8), // GQA
+            head_dim: 128,
+            hidden_size: 4096,
+            max_position_embeddings: 32768,
+            intermediate_size: 14336,
+            vocab_size: 32000,
+            model_type: ModelType::Mixtral,
+            rms_norm_eps: 1e-5,
+            use_rotary_embeddings: true,
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_model_type_variants_exist() {
+        // Verify all model type variants can be created
+        let _ = ModelType::Llama;
+        let _ = ModelType::Qwen;
+        let _ = ModelType::Mistral;
+        let _ = ModelType::Yi;
+        let _ = ModelType::Mixtral;
+    }
+
+    #[test]
+    fn test_default_mistral_config() {
+        let config = ModelConfig::default_mistral();
+        assert_eq!(config.model_type, ModelType::Mistral);
+        assert_eq!(config.num_hidden_layers, 32);
+        assert_eq!(config.num_attention_heads, 32);
+        assert_eq!(config.num_kv_heads, Some(8));
+        assert_eq!(config.hidden_size, 4096);
+        assert_eq!(config.max_position_embeddings, 32768);
+        assert_eq!(config.intermediate_size, 14336);
+        assert_eq!(config.vocab_size, 32000);
+        assert_eq!(config.rms_norm_eps, 1e-5);
+        assert!(config.validate().is_ok());
+        assert!(config.is_gqa());
+    }
+
+    #[test]
+    fn test_default_yi_config() {
+        let config = ModelConfig::default_yi();
+        assert_eq!(config.model_type, ModelType::Yi);
+        assert_eq!(config.num_hidden_layers, 24);
+        assert_eq!(config.num_attention_heads, 20);
+        assert_eq!(config.num_kv_heads, Some(4));
+        assert_eq!(config.hidden_size, 2560);
+        assert_eq!(config.max_position_embeddings, 4096);
+        assert_eq!(config.intermediate_size, 5632);
+        assert_eq!(config.vocab_size, 64000);
+        assert_eq!(config.rms_norm_eps, 1e-5);
+        assert!(config.validate().is_ok());
+        assert!(config.is_gqa());
+    }
+
+    #[test]
+    fn test_default_mixtral_config() {
+        let config = ModelConfig::default_mixtral();
+        assert_eq!(config.model_type, ModelType::Mixtral);
+        assert_eq!(config.num_hidden_layers, 32);
+        assert_eq!(config.num_attention_heads, 32);
+        assert_eq!(config.num_kv_heads, Some(8));
+        assert_eq!(config.hidden_size, 4096);
+        assert_eq!(config.max_position_embeddings, 32768);
+        assert_eq!(config.intermediate_size, 14336);
+        assert_eq!(config.vocab_size, 32000);
+        assert_eq!(config.rms_norm_eps, 1e-5);
+        assert!(config.validate().is_ok());
+        assert!(config.is_gqa());
     }
 }
