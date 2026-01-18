@@ -1,122 +1,172 @@
-# ROCmForge Roadmap
+# Roadmap: ROCmForge
 
-**Goal**: Achieve performance parity with llama.cpp on AMD GPUs through ggml IR completion
+## Overview
 
-**Target Hardware**: AMD RX 7900 XT (gfx1100)
+Build a production-ready LLM inference engine for AMD GPUs that is reliable, fast, and universally compatible with GGUF models. Start by fixing critical bugs blocking inference, then establish solid testing foundations, modularize the codebase, implement CPU SIMD fallback, complete GPU kernels, optimize attention, enable hybrid execution, ensure broad GGUF compatibility, optimize for balanced performance, and harden for production use.
 
-**Reference Implementation**: `/home/feanor/Projects/llama.cpp`
+## Domain Expertise
 
----
+None (no applicable domain expertise found)
 
-## Phase 1: Single-Pass GGUF Loading
+## Phases
 
-**Issue**: Triple GGUF parsing - file parsed twice (once for config, once for weights)
+**Phase Numbering:**
+- Integer phases (1, 2, 3): Planned milestone work
+- Decimal phases (2.1, 2.2): Urgent insertions (marked with INSERTED)
 
-**Impact**: 20-30% faster startup, reduced memory overhead
+Decimal phases appear between their surrounding integers in numeric order.
 
-### Plans
-- Parse GGUF once, cache metadata in struct
-- Reuse loader for both config extraction and weight loading
-- Add `load_gguf_model_with_loader(Arc<GgufLoader>)` variant
-- Update `InferenceEngine::from_gguf()` to use single-pass pattern
+- [ ] **Phase 1: Critical Bug Fixes** - Fix inference hangs and GPU synchronization bugs
+- [ ] **Phase 2: Test Infrastructure** - Restore commented tests and improve coverage
+- [ ] **Phase 3: Codebase Modularization** - Split large files into focused modules
+- [ ] **Phase 4: CPU SIMD Backend** - Implement optimized CPU operations with SIMD
+- [ ] **Phase 5: Quantized Operations** - Native HIP dequantization kernels
+- [ ] **Phase 6: Attention Optimization** - Flash attention detection and GPU kernels
+- [ ] **Phase 7: Hybrid Execution Scheduler** - Automatic CPU/GPU op selection
+- [ ] **Phase 8: GGUF Compatibility** - Universal model support across architectures
+- [ ] **Phase 9: Performance Optimization** - Balanced throughput, latency, memory efficiency
+- [ ] **Phase 10: Production Hardening** - Error handling, logging, monitoring, documentation
 
-**Files**: `src/engine.rs`, `src/loader/gguf.rs`
+## Phase Details
 
----
+### Phase 1: Critical Bug Fixes
+**Goal**: Fix inference hangs and GPU synchronization bugs blocking reliable execution
+**Depends on**: Nothing (first phase)
+**Research**: Unlikely (bugs identified in CONCERNS.md)
+**Plans**: TBD
 
-## Phase 2: Fixed-Shape Tensors with Offset Views
+Plans:
+- [ ] 01-01: Fix GPU stream synchronization (hipBLAS vs hipMemcpy mismatch)
+- [ ] 01-02: Fix inference loop spawn race condition
+- [ ] 01-03: Fix engine cleanup in CLI
 
-**Issue**: Graph shape mutation every decode token causes O(tokens) rebuilds
+### Phase 2: Test Infrastructure
+**Goal**: Restore commented tests and improve test coverage
+**Depends on**: Phase 1
+**Research**: Unlikely (testing patterns exist in codebase)
+**Plans**: TBD
 
-**Impact**: 10-15% faster token generation
+Plans:
+- [ ] 02-01: Rewrite 20+ commented GGUF loader tests for new API
+- [ ] 02-02: Restore embedding_to_lmhead tests
+- [ ] 02-03: Add end-to-end inference tests
+- [ ] 02-04: Replace unwrap() with proper error handling in tests
 
-### Plans
-- Pre-allocate max-size tensors for KV cache and attention
-- Implement offset-based views instead of reshape operations
-- Add `View` op variant for position-based tensor access
-- Update `forward_layer_ggml_decode()` to use fixed buffers
+### Phase 3: Codebase Modularization
+**Goal**: Split large files (>3000 LOC) into focused, maintainable modules
+**Depends on**: Phase 2
+**Research**: Unlikely (internal refactoring)
+**Plans**: TBD
 
-**Files**: `src/model/execution_plan.rs`, `src/ggml/op.rs`
+Plans:
+- [ ] 03-01: Split execution_plan.rs (4410 lines) into focused modules
+- [ ] 03-02: Split hip_backend.rs (3625 lines) into focused modules
+- [ ] 03-03: Split gguf.rs (2832 lines) into focused modules
+- [ ] 03-04: Consolidate duplicate test fixtures
 
-**Reference**: `ggml/src/ggml.c` - `ggml_view_1d()` pattern
+### Phase 4: CPU SIMD Backend
+**Goal**: Implement optimized CPU operations with SIMD for transparent fallback
+**Depends on**: Phase 3
+**Research**: Likely (SIMD crate selection, CPU architecture optimization)
+**Research topics**: Rust SIMD ecosystem (std::simd, packed_simd, wide), CPU feature detection
+**Plans**: TBD
 
----
+Plans:
+- [ ] 04-01: Research and select SIMD strategy for CPU ops
+- [ ] 04-02: Implement CPU backend trait with SIMD matmul
+- [ ] 04-03: Implement SIMD for attention operations
+- [ ] 04-04: Add CPU feature detection and runtime selection
 
-## Phase 3: Quantized MatMul Operations
+### Phase 5: Quantized Operations
+**Goal**: Native HIP dequantization kernels for efficient quantized inference
+**Depends on**: Phase 3
+**Research**: Likely (HIP kernel development, quantization formats)
+**Research topics**: Quantization formats (Q4_0, Q4_K, Q5_0, Q6_K, Q8_0), HIP kernel patterns
+**Plans**: TBD
 
-**Issue**: No quantized matmul ops (Q4_0, Q8_0) - must dequantize to F32 first
+Plans:
+- [ ] 05-01: Research quantization formats and dequantization algorithms
+- [ ] 05-02: Implement HIP dequantization kernel for Q4_0
+- [ ] 05-03: Implement HIP dequantization kernels for remaining formats
+- [ ] 05-04: Integrate dequantization + matmul fused kernel
 
-**Impact**: Enables efficient quantized model inference
+### Phase 6: Attention Optimization
+**Goal**: Flash attention detection and GPU kernels for optimized inference
+**Depends on**: Phase 4
+**Research**: Likely (flash attention algorithms, ROCm attention patterns)
+**Research topics**: Flash attention algorithms, ROCm attention libraries, kernel optimization
+**Plans**: TBD
 
-### Plans
-- Add `MatMulQ4_0`, `MatMulQ8_0` variants to `Op` enum
-- Implement HIP dequantization kernels
-- Add block-level quantization support
-- Integrate with ggml executor
+Plans:
+- [ ] 06-01: Research flash attention implementation for ROCm
+- [ ] 06-02: Implement flash attention detection in backend registry
+- [ ] 06-03: Implement flash attention HIP kernel
+- [ ] 06-04: Benchmark and optimize attention performance
 
-**Files**: `src/ggml/op.rs`, `src/ggml/hip_backend/mod.rs`
+### Phase 7: Hybrid Execution Scheduler
+**Goal**: Automatic CPU/GPU operation selection for maximum compatibility
+**Depends on**: Phase 4, Phase 5
+**Research**: Likely (scheduler design, op cost modeling)
+**Research topics**: Hybrid execution patterns, op cost modeling, fallback strategies
+**Plans**: TBD
 
-**Reference**: `ggml/src/ggml-cpu/quants.h`
+Plans:
+- [ ] 07-01: Design hybrid execution scheduler architecture
+- [ ] 07-02: Implement per-operation CPU/GPU availability tracking
+- [ ] 07-03: Implement automatic op selection based on availability
+- [ ] 07-04: Add telemetry for execution path debugging
 
----
+### Phase 8: GGUF Compatibility
+**Goal**: Universal GGUF support across all model architectures and quantizations
+**Depends on**: Phase 5
+**Research**: Likely (GGUF format variations, model architectures)
+**Research topics**: GGUF format spec, LLaMA vs Qwen vs Mistral architectures, quantization compatibility
+**Plans**: TBD
 
-## Phase 4: Static Weight Binding
+Plans:
+- [ ] 08-01: Research GGUF format variations and model architectures
+- [ ] 08-02: Add support for missing architectures (Mistral, Yi, etc.)
+- [ ] 08-03: Ensure all quantization formats load correctly
+- [ ] 08-04: Add model compatibility test matrix
 
-**Issue**: Weights rebound every decode step despite never changing
+### Phase 9: Performance Optimization
+**Goal**: Balanced optimization of throughput, latency, and memory efficiency
+**Depends on**: Phase 6, Phase 7
+**Research**: Unlikely (profiling and optimization based on existing code)
+**Plans**: TBD
 
-**Impact**: 5-10% faster token generation
+Plans:
+- [ ] 09-01: Profile and optimize throughput (tokens/second)
+- [ ] 09-02: Profile and optimize latency (first token time)
+- [ ] 09-03: Profile and optimize memory efficiency (KV cache, allocations)
+- [ ] 09-04: Add performance benchmarks and regression tests
 
-### Plans
-- Separate static weight graphs from dynamic decode graphs
-- Bind weight tensors once at graph construction
-- Cache weight buffer bindings
-- Update graph execution to skip redundant binds
+### Phase 10: Production Hardening
+**Goal**: Error handling, logging, monitoring, and documentation for production use
+**Depends on**: Phase 9
+**Research**: Unlikely (production readiness practices)
+**Plans**: TBD
 
-**Files**: `src/model/execution_plan.rs`, `src/ggml/executor.rs`
+Plans:
+- [ ] 10-01: Replace unwrap() with proper error handling in production paths
+- [ ] 10-02: Complete eprintln! to tracing migration
+- [ ] 10-03: Add .env.example and configuration documentation
+- [ ] 10-04: Add health checks and monitoring endpoints
 
----
+## Progress
 
-## Phase 5: Complete Missing ggml Ops
+**Execution Order:**
+Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8 → 9 → 10
 
-**Issue**: Accumulate op, tensor pool/allocator, graph optimizer missing
-
-**Impact**: Full ggml IR compatibility, cleaner architecture
-
-### Plans
-- Implement `Accumulate` op for KV cache writes
-- Add tensor pool/allocator for buffer reuse
-- Implement CSE (common subexpression elimination)
-- Add dead code elimination pass
-
-**Files**: `src/ggml/op.rs`, `src/ggml/allocator.rs` (new)
-
----
-
-## Phase 6: End-to-End Integration Tests
-
-**Issue**: No validation that full pipeline works with real models
-
-**Impact**: Confidence in production readiness
-
-### Plans
-- Test with real GGUF models (Qwen2 0.5B, LLaMA 7B)
-- Validate output against llama.cpp reference
-- Benchmark token generation speed
-- Profile memory usage
-
-**Files**: `tests/integration/` (new directory)
-
----
-
-## Order of Execution
-
-1. **Phase 1** (Single-pass loading) - Easiest win, eliminates waste
-2. **Phase 2** (Fixed-shape tensors) - Biggest performance gain
-3. **Phase 4** (Static binding) - Builds on Phase 2
-4. **Phase 3** (Quantized ops) - Enables quantized models
-5. **Phase 5** (Complete ops) - Polish and optimization
-6. **Phase 6** (Integration tests) - Validate everything
-
----
-
-*Last updated: 2026-01-14*
+| Phase | Plans Complete | Status | Completed |
+|-------|----------------|--------|-----------|
+| 1. Critical Bug Fixes | 0/3 | Not started | - |
+| 2. Test Infrastructure | 0/4 | Not started | - |
+| 3. Codebase Modularization | 0/4 | Not started | - |
+| 4. CPU SIMD Backend | 0/4 | Not started | - |
+| 5. Quantized Operations | 0/4 | Not started | - |
+| 6. Attention Optimization | 0/4 | Not started | - |
+| 7. Hybrid Execution Scheduler | 0/4 | Not started | - |
+| 8. GGUF Compatibility | 0/4 | Not started | - |
+| 9. Performance Optimization | 0/4 | Not started | - |
+| 10. Production Hardening | 0/4 | Not started | - |

@@ -1,88 +1,63 @@
-# ROCmForge Project State
+# Project State
 
-**Session**: session-gsd-init-20260114
-**Last Updated**: 2026-01-14
+## Project Reference
 
-## Current Phase
+See: .planning/PROJECT.md (updated 2026-01-18)
 
-Phase 5: Complete Missing ggml Ops 🔄 IN PROGRESS
+**Core value:** Reliable, fast inference on AMD GPUs with transparent CPU fallback.
+**Current focus:** Phase 1 — Critical Bug Fixes
 
-## Active WIP
+## Current Position
 
-### Phase 5: Complete Missing ggml Ops (2026-01-14) 🔄
+Phase: 1 of 10 (Critical Bug Fixes)
+Plan: Not started
+Status: Ready to plan
+Last activity: 2026-01-18 — Roadmap created
 
-**Completed:**
-- Accumulate op for efficient KV cache writes
-  - `src/ggml/op.rs` - Added to Op enum
-  - `src/ggml/hip_backend/ops/accumulate.rs` - CPU-side implementation
-  - `src/ggml/hip_backend/mod.rs` - execute_op handler (lines 1145-1203)
-  - 3 unit tests
+Progress: ░░░░░░░░░░ 0%
 
-- Tensor allocator for buffer reuse
-  - `src/ggml/allocator.rs` - TensorAllocator with size-pooled free blocks
-  - `src/ggml/hip_backend/mod.rs` - Integrated with `with_allocator()`, `reset_allocator()`, `allocator_stats()`
-  - 4 unit tests
+## Performance Metrics
 
-- Graph optimizer enhancements (all using TDD)
-  - Layout optimization pass (RowMajor vs ColMajor for MatMul)
-  - CSE tensor cleanup (removes duplicate nodes and orphaned tensors)
-  - Explicit graph output markers (mark_output, is_output, get_outputs)
-  - Optimizer integration into executor (ExecuteConfig, execute_graph_with_config)
-  - 16 optimizer tests (8 original + 8 new)
+**Velocity:**
+- Total plans completed: 0
+- Average duration: —
+- Total execution time: 0 hours
 
-**Remaining:**
-- Performance measurement of allocator impact (requires real workload benchmarking)
+**By Phase:**
 
-## Completed Work
+| Phase | Plans | Total | Avg/Plan |
+|-------|-------|-------|----------|
+| - | - | - | - |
 
-### Phase 4: Static Weight Binding (2026-01-14) ✅
+**Recent Trend:**
+- Last 5 plans: —
+- Trend: —
 
-Verified that weights are already bound once at graph construction via `OnceCell` caching in `layer_ggml_plans`. No per-decode-step rebinding occurs.
+*Updated after each plan completion*
 
-### Phase 3: Quantized MatMul Operations (2026-01-14) ✅
+## Accumulated Context
 
-Added Q4_0 and Q8_0 matmul operations for efficient quantized model inference:
-- Added `MatMulQ4_0` and `MatMulQ8_0` to `Op` enum
-- Implemented CPU-side dequantization functions
-- Added execute_op handlers in HIP backend
+### Decisions
 
-### Phase 2: Fixed-Shape Tensors (2026-01-14) ✅
+Decisions are logged in PROJECT.md Key Decisions table.
+Recent decisions affecting current work:
 
-Removed unnecessary `set_shape()` calls that were causing O(tokens) graph rebuilds. Tensors were already pre-allocated with max_seq_len at graph construction.
+(None yet)
 
-### Phase 1: Single-Pass GGUF Loading (2026-01-14) ✅
+### Deferred Issues
 
-Eliminated redundant GGUF parsing. Added `ModelRuntime::load_from_gguf_with_loader()` and `InferenceEngine::load_gguf_model_with_loader()` to parse GGUF once and reuse loader.
+None yet.
 
-### Previous Sessions (Before GSD)
-- GPU Kernels (Phases 1-4) - Complete
-- GGUF Loader - Complete
-- MXFP Quantization (Phase 5) - Complete
-- KV Cache - Complete
-- HTTP Server - Complete
-- Async GPU Loading (Phase 17) - Complete
+### Pending Todos
 
-## Known Issues
+None yet.
 
-See `docs/CLI_AND_MODEL_LOADING_ANALYSIS.md` for detailed analysis:
+### Blockers/Concerns
 
-1. ~~Triple GGUF parsing - Startup latency~~ ✅ Fixed in Phase 1
-2. ~~Graph rebuilding every token - Token generation slowdown~~ ✅ Fixed in Phase 2
-3. ~~Weights bound per-decode-step~~ ✅ Verified as already optimized
-4. ~~Missing quantization ops~~ ✅ Fixed in Phase 3
-5. ~~Inefficient KV cache access~~ ✅ Accumulate op added in Phase 5
+None yet.
 
-## Known Limitations
+## Session Continuity
 
-- Quantized matmul uses CPU-side dequantization (GPU kernels TODO)
-- Accumulate op uses CPU-side computation (GPU kernel TODO)
-
-## Blocked On
-
-Nothing
-
-## Notes
-
-- Target hardware: AMD RX 7900 XT (gfx1100)
-- Reference implementation: /home/feanor/Projects/llama.cpp
-- Follow llama.cpp patterns for proven performance
+Last session: 2026-01-18
+Stopped at: Roadmap created, ready to plan Phase 1
+Resume file: None
