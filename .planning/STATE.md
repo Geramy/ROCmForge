@@ -12,16 +12,16 @@ See: .planning/PROJECT.md (updated 2026-01-18)
 Phase: 2 of 10 (Test Infrastructure)
 Plan: 1 of 4 in current phase
 Status: In progress
-Last activity: 2026-01-18 — Completed 02-03-PLAN.md
+Last activity: 2026-01-18 — Completed 02-01-PLAN.md
 
 Progress: █████░░░░░░ 30% (Phase 1 complete, Phase 2: 1/4 plans)
 
 ## Performance Metrics
 
 **Velocity:**
-- Total plans completed: 4
-- Average duration: ~3 hours/plan (including testing)
-- Total execution time: ~12 hours
+- Total plans completed: 5
+- Average duration: ~2.5 hours/plan (including testing)
+- Total execution time: ~12.5 hours
 
 **By Phase:**
 
@@ -31,7 +31,7 @@ Progress: █████░░░░░░ 30% (Phase 1 complete, Phase 2: 1/4 
 | 2 (Test Infrastructure) | 4 | ~15 hours (est.) | ~3.75 hours |
 
 **Recent Trend:**
-- Last 4 plans: 01-01, 01-02, 01-03, 02-03
+- Last 5 plans: 01-01, 01-02, 01-03, 02-03, 02-01
 - Trend: Fast execution, consistent delivery
 
 *Updated after each plan completion*
@@ -72,6 +72,27 @@ None yet.
 Last session: 2026-01-18
 Stopped at: Phase 2 planning complete
 Resume file: None
+
+## Phase 2 Plan 1 Summary
+
+**Completed:** 2026-01-18
+**Duration:** 3 min
+
+### Accomplishments
+
+1. **Rewrote 5 commented GGUF loader tests** for current GgufLoader API
+2. **Created 2 test helper functions** for GGUF file generation
+3. **All tests passing**: 8/8 GGUF loader tests pass
+
+### Commits
+
+- `88597ce`: test(02-01): rewrite 5 commented GGUF loader tests for new API
+
+### Decisions Made
+
+- Use "general.architecture" as metadata key (loader expects dotted format)
+- Create minimal GGUF files inline (no external fixtures needed)
+- LazyTensor methods return Option<T> (shape(), tensor_type())
 
 ## Phase 2 Plan 3 Summary
 
@@ -141,9 +162,9 @@ Resume file: None
 
 | Plan | Title | Status |
 |------|-------|--------|
-| 02-01 | Rewrite 20+ commented GGUF loader tests for new API | Planned |
+| 02-01 | Rewrite commented GGUF loader tests for new API | Complete |
 | 02-02 | Restore embedding_to_lmhead tests | Planned |
-| 02-03 | Add end-to-end inference tests | Completed |
+| 02-03 | Add end-to-end inference tests | Complete |
 | 02-04 | Replace unwrap() with proper error handling in tests | Planned |
 
 ### Phase 2 Overview
