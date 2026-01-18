@@ -695,6 +695,103 @@ pub fn dequant_q3_k(tensor: &GgufTensor) -> Result<Vec<f32>> {
     Ok(result)
 }
 
+/// Dequantize Q2_K tensor to FP32
+/// Q2_K uses super-block structure with 256-byte blocks (most complex K-quant format)
+pub fn dequant_q2_k(tensor: &GgufTensor) -> Result<Vec<f32>> {
+    let total_elements = tensor.total_elements();
+    let mut result = vec![0.0f32; total_elements];
+    let blocks = total_elements.div_ceil(256);
+
+    for block_idx in 0..blocks {
+        let block_start = block_idx * 256;
+
+        if block_start + 256 > tensor.data.len() {
+            break;
+        }
+
+        // Q2_K super-block structure:
+        // - 32 bytes: 16 half-precision scales (2 bytes each)
+        // - 32 bytes: 16 half-precision mins (2 bytes each)
+        // - 4 bytes: qh (high bits for 2-bit quants)
+        // - 136 bytes: 2-bit quantized values (256 * 2 / 8 = 64 bytes + padding)
+        // - 52 bytes: additional data
+
+        let scales_start = block_start;
+        let mins_start = block_start + 32;
+        let qh_start = block_start + 64;
+        let quants_start = block_start + 68;
+
+        // Process each of the 16 sub-blocks (16 elements each)
+        for sub_block_idx in 0..16 {
+            let sub_block_start = block_idx * 256 + sub_block_idx * 16;
+
+            // Get scale for this sub-block
+            let scale_offset = scales_start + sub_block_idx * 2;
+            let scale = if scale_offset + 2 <= tensor.data.len() {
+                let scale_bits = u16::from_le_bytes([
+                    tensor.data[scale_offset],
+                    tensor.data[scale_offset + 1],
+                ]);
+                half::f16::from_bits(scale_bits).to_f32()
+            } else {
+                1.0
+            };
+
+            // Get min for this sub-block
+            let min_offset = mins_start + sub_block_idx * 2;
+            let min = if min_offset + 2 <= tensor.data.len() {
+                let min_bits = u16::from_le_bytes([
+                    tensor.data[min_offset],
+                    tensor.data[min_offset + 1],
+                ]);
+                half::f16::from_bits(min_bits).to_f32()
+            } else {
+                0.0
+            };
+
+            // Read high bits (qh) - Q2_K has 1 high bit per pair of elements
+            let qh_offset = qh_start + sub_block_idx / 8;
+            let qh_shift = (sub_block_idx % 8) * 1;
+            let qh = if qh_offset < tensor.data.len() {
+                (tensor.data[qh_offset] >> qh_shift) & 0x01
+            } else {
+                0
+            };
+
+            // Extract 2-bit quantized values for this sub-block (16 values)
+            for i in 0..16 {
+                let element_idx = sub_block_start + i;
+                if element_idx >= total_elements {
+                    break;
+                }
+
+                // 2-bit values packed: 16 values * 2 bits = 32 bits = 4 bytes per sub-block
+                let bit_pos = i * 2;
+                let byte_idx = bit_pos / 8;
+                let bit_offset = bit_pos % 8;
+
+                let quant_offset = quants_start + sub_block_idx * 4 + byte_idx;
+
+                let quant = if quant_offset + 1 < tensor.data.len() {
+                    let combined = ((tensor.data[quant_offset + 1] as u16) << 8)
+                                   | (tensor.data[quant_offset] as u16);
+                    let low_bits = ((combined >> bit_offset) & 0x03) as u8;
+
+                    // Combine with high bit from qh
+                    let high_bit = if i < 8 { (qh >> i) & 1 } else { 0 };
+                    (low_bits | (high_bit << 2)) as i8 as f32
+                } else {
+                    0.0
+                };
+
+                result[element_idx] = min + quant * scale;
+            }
+        }
+    }
+
+    Ok(result)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -906,16 +1003,10 @@ pub fn dequantize(tensor: &GgufTensor) -> Result<Vec<f32>> {
         GgufTensorType::Q5_1 => dequant_q5_1(tensor),
         GgufTensorType::Mxfp4 => dequant_mxfp4(tensor),
         GgufTensorType::Mxfp6E2m3 | GgufTensorType::Mxfp6E3m2 => dequant_mxfp6(tensor),
+        GgufTensorType::Q2_K => dequant_q2_k(tensor),
         GgufTensorType::Q3_K => dequant_q3_k(tensor),
         GgufTensorType::Q4_K => dequant_q4_k(tensor),
         GgufTensorType::Q5_K => dequant_q5_k(tensor),
         GgufTensorType::Q6_K => dequant_q6_k(tensor),
-        GgufTensorType::Q2_K => {
-            Err(anyhow::anyhow!(
-                "K-quant type {:?} not yet implemented for tensor '{}'",
-                tensor.tensor_type,
-                tensor.name
-            ))
-        }
     }
 }
