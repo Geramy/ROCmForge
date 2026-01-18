@@ -766,18 +766,18 @@ fn benchmark_kv_cache_profiling() {
         println!("  Config: {} layers, {} heads, {} head_dim, {} tokens/page",
                  num_layers, num_heads, head_dim, page_size);
 
-        for seq_len in sequence_lengths {
+        for seq_len in &sequence_lengths {
             // Calculate theoretical memory requirements
             let elements_per_token_per_layer = num_heads * head_dim * 2; // K + V
             let elements_per_token = elements_per_token_per_layer * num_layers;
             let bytes_per_token = elements_per_token * std::mem::size_of::<f32>();
 
             // Paged allocation
-            let num_pages = (seq_len + page_size - 1) / page_size;
+            let num_pages = (*seq_len + page_size - 1) / page_size;
             let allocated_tokens = num_pages * page_size;
 
             let total_kv_bytes = allocated_tokens * bytes_per_token;
-            let used_kv_bytes = seq_len * bytes_per_token;
+            let used_kv_bytes = *seq_len * bytes_per_token;
             let wasted_bytes = total_kv_bytes - used_kv_bytes;
 
             // Page table overhead
@@ -895,14 +895,14 @@ fn benchmark_model_memory_profile() {
     println!("|---------------|-----|-----------|-----------|-----------|");
 
     for (model_name, _params, layers, heads, head_dim) in models {
-        for seq_len in seq_lengths {
+        for seq_len in &seq_lengths {
             let elements_per_token = layers * heads * head_dim * 2; // K + V
             let bytes_per_token = elements_per_token * std::mem::size_of::<f32>();
-            let total_kv_bytes = seq_len * bytes_per_token;
+            let total_kv_bytes = *seq_len * bytes_per_token;
 
             // Assume 16-token pages
             let page_size = 16;
-            let num_pages = (seq_len + page_size - 1) / page_size;
+            let num_pages = (*seq_len + page_size - 1) / page_size;
             let overhead_bytes = num_pages * std::mem::size_of::<u32>() * 4;
 
             println!("| {:13} | {:4} | {:9} | {:9} | {:9} |",
