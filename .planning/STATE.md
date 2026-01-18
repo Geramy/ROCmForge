@@ -5,22 +5,35 @@
 See: .planning/PROJECT.md (updated 2026-01-18)
 
 **Core value:** Reliable, fast inference on AMD GPUs with transparent CPU fallback.
-**Current focus:** Phase 7 - Hybrid Execution
+**Current focus:** Phase 8 - GGUF Compatibility
 
 ## Current Position
 
-Phase: 7 of 10 (Hybrid Execution)
-Plan: 4 of 4
-Status: 07-04 complete, Phase 7 complete
-Last activity: 2026-01-18 — Completed 07-04 (Telemetry for execution path debugging)
+Phase: 8 of 10 (GGUF Compatibility)
+Plan: 02 of 11
+Status: 08-02 complete, in progress on Phase 8
+Last activity: 2026-01-18 — Completed 08-02 (Yi architecture support)
 
-Progress: ██████████ 88% (Phases 1-6 complete, Phase 7 complete)
+Progress: ██████████ 89% (Phases 1-7 complete, Phase 8 in progress)
 
 **Phase 7 Status:** ✅ Complete (4/4 plans complete)
 - 07-01: Complete - Hybrid scheduler architecture (CapabilityProvider trait, HybridScheduler with 4 strategies, telemetry system)
 - 07-02: Complete - Backend capability implementation (CpuBackend and HipGgmlBackend implement CapabilityProvider)
 - 07-03: Complete - Cost modeling for backend selection (Enhanced cost estimation, automatic selection, HybridExecutor)
 - 07-04: Complete - Telemetry for execution path debugging (Execution timing, reporting methods, integration tests)
+
+**Phase 8 Status:** 🔄 In Progress (2/11 plans complete)
+- 08-01: Complete - Mistral metadata keys (Key mappings for mistral.* metadata)
+- 08-02: Complete - Yi architecture support (Yi variant in Architecture enum, metadata keys)
+- 08-03: Complete - Mixtral (MoE) architecture detection (Mixtral variant, MoE-specific keys)
+- 08-04: Pending - Add missing ModelType variants (Mistral, Yi, Mixtral to ModelType enum)
+- 08-05: Pending - Implement Q5_K CPU dequantization
+- 08-06: Pending - Implement Q3_K CPU dequantization
+- 08-07: Pending - Implement Q2_K CPU dequantization
+- 08-08: Pending - Create Q5_K GPU dequantization kernel
+- 08-09: Pending - Create Q3_K GPU dequantization kernel
+- 08-10: Pending - Create Q2_K GPU dequantization kernel
+- 08-11: Pending - Build compatibility test matrix
 
 **Phase 6 Status:** ✅ Complete
 - 06-01: Complete - Flash attention research (RESEARCH.md with kernel documentation and integration strategy)
@@ -49,9 +62,9 @@ Progress: ██████████ 88% (Phases 1-6 complete, Phase 7 compl
 ## Performance Metrics
 
 **Velocity:**
-- Total plans completed: 21
-- Average duration: ~1.48 hours/plan (including testing)
-- Total execution time: ~31.1 hours
+- Total plans completed: 24
+- Average duration: ~1.42 hours/plan (including testing)
+- Total execution time: ~34.1 hours
 
 **By Phase:**
 
@@ -63,7 +76,8 @@ Progress: ██████████ 88% (Phases 1-6 complete, Phase 7 compl
 | 4 (CPU SIMD Backend) | 4 | ~1.2 hours | ~0.3 hours |
 | 5 (Quantized Operations) | 4 | ~0.4 hours | ~6 min |
 | 6 (Attention Optimization) | 4 | ~2 hours | ~30 min |
-| 7 (Hybrid Execution) | 2 | ~0.5 hours | ~15 min |
+| 7 (Hybrid Execution) | 4 | ~1 hours | ~15 min |
+| 8 (GGUF Compatibility) | 3 (in progress) | ~0.75 hours | ~15 min |
 
 **Recent Trend:**
 - Last 10 plans: 04-01, 04-02, 04-03, 04-04, 05-01, 05-02, 05-03, 05-04, 06-01 to 06-04, 07-01, 07-02
@@ -942,3 +956,42 @@ The plan originally recommended `packed_simd`, but research revealed this crate 
 ---
 
 *Updated: 2026-01-18*
+
+## Phase 8 Plan 2 Summary
+
+**Completed:** 2026-01-18
+**Duration:** 15 min
+
+### Accomplishments
+
+1. **Yi Architecture Detection** - Added `Yi` variant to `Architecture` enum in architecture.rs
+2. **Yi Metadata Key Mappings** - Added 9 Yi-specific metadata key patterns in metadata.rs
+3. **Test Coverage** - Added tests for Yi variant and metadata parsing
+
+### Commits
+
+- `3b1459e`: feat(08-02): add Yi variant to Architecture enum
+- `788c6ad`: feat(08-02): add Yi architecture metadata key mappings
+
+### Decisions Made
+
+- **Shared tensor pattern with Mistral** - Yi uses same tensor naming as Mistral (`model.layers.N.*`)
+- **Metadata-based differentiation** - Actual Yi vs Mistral distinction via `general.architecture` key
+- **Multiple key name variants** - Support both `yi.n_layers` and `yi.block_count` style keys
+
+### Files Modified
+
+- `src/model/execution_plan/architecture.rs` - Added Yi variant (+102 LOC)
+  - Yi enum variant with documentation
+  - layer_prefix() returns "model.layers.N" for Yi
+  - 5 new tests
+- `src/loader/metadata.rs` - Added Yi metadata keys (+49 LOC)
+  - 9 Yi metadata key patterns
+  - test_yi_metadata_parsing() unit test
+
+### Test Results
+
+- **Total tests**: 324 passing (was 323, added 1 new test)
+- **New tests**: test_yi_variant_layer_prefix, test_yi_metadata_parsing
+- **All architecture tests passing**: 6/6 (including Yi and Mixtral)
+- **All metadata tests passing**: 5/5 (including Yi and Mistral)
