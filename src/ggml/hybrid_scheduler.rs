@@ -175,26 +175,54 @@ impl HybridScheduler {
     }
 
     fn select_automatic(&self, op: &Op) -> GgmlResult<BackendSelection> {
-        // For now, prefer GPU if available and supports the operation
-        // Cost modeling will be enhanced in 07-03
         let gpu_available = self.gpu_backend.as_ref()
             .map(|b| b.as_ref().can_execute(op))
             .unwrap_or(false);
 
-        if gpu_available {
-            self.select_gpu_preferred(op)
-        } else if let Some(cpu) = &self.cpu_backend {
-            if cpu.as_ref().can_execute(op) {
-                Ok(BackendSelection {
-                    backend_id: cpu.as_ref().backend_id().to_string(),
-                    reason: SelectionReason::CpuFallback,
-                    estimated_cost: self.estimate_cost(cpu.as_ref(), op),
-                })
-            } else {
+        let cpu_available = self.cpu_backend.as_ref()
+            .map(|b| b.as_ref().can_execute(op))
+            .unwrap_or(false);
+
+        match (gpu_available, cpu_available) {
+            (true, true) => {
+                // Both available - compare costs
+                if let (Some(gpu), Some(cpu)) = (&self.gpu_backend, &self.cpu_backend) {
+                    let gpu_cost = self.estimate_cost(gpu.as_ref(), op);
+                    let cpu_cost = self.estimate_cost(cpu.as_ref(), op);
+
+                    // Prefer GPU unless CPU is significantly faster
+                    // (e.g., for very small operations where transfer cost dominates)
+                    // CPU must be at least 2x faster to be preferred
+                    if cpu_cost.estimated_us < gpu_cost.estimated_us / 2 {
+                        // CPU is at least 2x faster - use it
+                        Ok(BackendSelection {
+                            backend_id: "cpu".to_string(),
+                            reason: SelectionReason::CostModel {
+                                gpu_cost,
+                                cpu_cost,
+                            },
+                            estimated_cost: cpu_cost,
+                        })
+                    } else {
+                        // GPU is preferred (default for most operations)
+                        Ok(BackendSelection {
+                            backend_id: "gpu".to_string(),
+                            reason: SelectionReason::CostModel {
+                                gpu_cost,
+                                cpu_cost,
+                            },
+                            estimated_cost: gpu_cost,
+                        })
+                    }
+                } else {
+                    unreachable!()
+                }
+            }
+            (true, false) => self.select_gpu_preferred(op),
+            (false, true) => self.select_cpu_preferred(op),
+            (false, false) => {
                 Err(GgmlError::Backend("No backend can execute this operation".to_string()))
             }
-        } else {
-            Err(GgmlError::Backend("No backends available".to_string()))
         }
     }
 
