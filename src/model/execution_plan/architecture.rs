@@ -47,6 +47,7 @@ impl Architecture {
             Architecture::LLaMA => "LLaMA",
             Architecture::Mistral => "Mistral",
             Architecture::Yi => "Yi",
+            Architecture::Mixtral => "Mixtral",
         }
     }
 
@@ -55,9 +56,9 @@ impl Architecture {
     /// Scans tensor names to identify the architecture pattern:
     /// - Qwen2: tensors start with `blk.N.`
     /// - LLaMA: tensors start with `transformer.layers.N.`
-    /// - Mistral/Yi: tensors start with `model.layers.N.`
+    /// - Mistral/Yi/Mixtral: tensors start with `model.layers.N.`
     ///
-    /// Note: Mistral and Yi share the same tensor naming pattern.
+    /// Note: Mistral, Yi, and Mixtral share the same tensor naming pattern.
     /// Differentiation is done via `general.architecture` metadata key
     /// which should be checked after detection.
     pub fn detect(tensor_names: &HashSet<String>) -> Result<Self, HipError> {
@@ -107,7 +108,7 @@ impl Architecture {
         Err(HipError::GenericError(format!(
             "Unable to detect model architecture from tensor names. \
              Expected patterns like 'blk.0.*' (Qwen2), 'transformer.layers.0.*' (LLaMA), \
-             or 'model.layers.0.*' (Mistral/Yi). \
+             or 'model.layers.0.*' (Mistral/Yi/Mixtral). \
              Sample tensors found: {:?}",
             sample_tensors
         )))
@@ -178,6 +179,16 @@ mod tests {
         // Test that layer_prefix works correctly for Yi
         let arch = Architecture::Yi;
         assert_eq!(arch.name(), "Yi");
+        assert_eq!(arch.layer_prefix(0), "model.layers.0");
+        assert_eq!(arch.layer_prefix(5), "model.layers.5");
+    }
+
+    #[test]
+    fn test_mixtral_variant_layer_prefix() {
+        // Mixtral shares the same tensor pattern as Mistral/Yi
+        // Test that layer_prefix works correctly for Mixtral
+        let arch = Architecture::Mixtral;
+        assert_eq!(arch.name(), "Mixtral");
         assert_eq!(arch.layer_prefix(0), "model.layers.0");
         assert_eq!(arch.layer_prefix(5), "model.layers.5");
     }
