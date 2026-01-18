@@ -21,7 +21,7 @@ pub use optimizer::{GraphOptimizer, OptimizerStats};
 
 // Hybrid scheduler exports
 pub use hybrid_scheduler::{
-    CapabilityProvider, HybridScheduler, ExecutionStrategy,
+    CapabilityProvider, HybridScheduler, HybridExecutor, ExecutionStrategy,
     OpCapability, OpType, OpCost, BackendSelection, SelectionReason,
     ExecutionEvent, BackendStats,
 };

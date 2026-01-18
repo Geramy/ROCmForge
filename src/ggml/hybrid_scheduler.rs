@@ -1,6 +1,7 @@
 //! Hybrid execution scheduler for automatic CPU/GPU operation selection
 
-use crate::ggml::{GgmlError, GgmlResult, Op, DType};
+use crate::ggml::{GgmlBackend, GgmlError, GgmlResult, Op, TensorDesc, TensorId, DType};
+use std::any::Any;
 use std::sync::Arc;
 
 /// Capability descriptor for a backend operation
@@ -382,6 +383,184 @@ impl OpCapability {
     pub fn with_feature(mut self, feature: &str) -> Self {
         self.requires_feature = Some(feature.to_string());
         self
+    }
+}
+
+/// Hybrid executor that delegates to CPU or GPU backend based on scheduler decisions
+///
+/// This executor wraps both CPU and GPU backends and automatically selects
+/// the appropriate one for each operation based on the cost model.
+///
+/// # Type Parameters
+/// - `Buffer`: Uses `Box<dyn Any>` to handle different buffer types from different backends
+///
+/// # Example
+/// ```ignore
+/// let cpu = Box::new(CpuBackend::new());
+/// let gpu = Some(Box::new(HipGgmlBackend::new(hip_backend)));
+/// let mut executor = HybridExecutor::new(cpu, gpu);
+///
+/// // Use executor like any other GgmlBackend
+/// executor.alloc(&tensor_desc)?;
+/// executor.execute_op(&Op::MatMul, &[input_a, input_b], &[output])?;
+/// ```
+pub struct HybridExecutor {
+    scheduler: HybridScheduler,
+    /// CPU backend - always available for fallback
+    cpu_backend: Option<Box<dyn GgmlBackend<Buffer = Box<dyn Any>>>>,
+    /// GPU backend - optional, may not be available
+    gpu_backend: Option<Box<dyn GgmlBackend<Buffer = Box<dyn Any>>>>,
+    /// Track which backend is currently active for a given operation
+    active_backend: Option<String>,
+}
+
+impl HybridExecutor {
+    /// Create a new hybrid executor with CPU and optional GPU backend
+    ///
+    /// # Arguments
+    /// - `cpu`: CPU backend for fallback and small operations
+    /// - `gpu`: Optional GPU backend for large parallelizable operations
+    ///
+    /// # Returns
+    /// A new HybridExecutor with Automatic strategy if GPU available, CpuPreferred otherwise
+    pub fn new(
+        cpu: Box<dyn GgmlBackend<Buffer = Box<dyn Any>>>,
+        gpu: Option<Box<dyn GgmlBackend<Buffer = Box<dyn Any>>>>,
+    ) -> Self {
+        let strategy = if gpu.is_some() {
+            ExecutionStrategy::Automatic
+        } else {
+            ExecutionStrategy::CpuPreferred
+        };
+
+        let mut scheduler = HybridScheduler::new(strategy);
+
+        // Register capability providers if available
+        // Note: We need to wrap the backends to provide CapabilityProvider
+        // This is a simplified version - full integration would require backend wrappers
+
+        Self {
+            scheduler,
+            cpu_backend: Some(cpu),
+            gpu_backend: gpu,
+            active_backend: None,
+        }
+    }
+
+    /// Get the scheduler for configuration
+    pub fn scheduler(&self) -> &HybridScheduler {
+        &self.scheduler
+    }
+
+    /// Get mutable scheduler for configuration
+    pub fn scheduler_mut(&mut self) -> &mut HybridScheduler {
+        &mut self.scheduler
+    }
+
+    /// Select backend for an operation using heuristic-based selection
+    ///
+    /// This is a simplified selection based on operation type.
+    /// In production, this would use the scheduler's full cost model with
+    /// actual tensor shape information.
+    fn select_backend_for_op(&self, op: &Op) -> GgmlResult<String> {
+        // Use heuristic based on operation type and availability
+        let gpu_available = self.gpu_backend.is_some();
+
+        if gpu_available {
+            match op {
+                // Large, parallelizable operations prefer GPU
+                Op::MatMul { .. } | Op::MatMulQ4_0 | Op::MatMulQ8_0 | Op::Attention => {
+                    Ok("gpu".to_string())
+                }
+                // Small element-wise operations may use CPU
+                Op::Add | Op::Scale { .. } | Op::Softmax => Ok("cpu".to_string()),
+                // Other operations use CPU for simplicity
+                _ => Ok("cpu".to_string()),
+            }
+        } else {
+            Ok("cpu".to_string())
+        }
+    }
+
+    /// Get a mutable reference to a backend by name
+    fn get_backend_mut(&mut self, name: &str) -> GgmlResult<&mut dyn GgmlBackend<Buffer = Box<dyn Any>>> {
+        match name {
+            "cpu" => self.cpu_backend.as_mut()
+                .map(|b| b.as_mut() as &mut dyn GgmlBackend<Buffer = Box<dyn Any>>)
+                .ok_or_else(|| GgmlError::Backend("CPU backend not available".to_string())),
+            "gpu" => self.gpu_backend.as_mut()
+                .map(|b| b.as_mut() as &mut dyn GgmlBackend<Buffer = Box<dyn Any>>)
+                .ok_or_else(|| GgmlError::Backend("GPU backend not available".to_string())),
+            _ => Err(GgmlError::Backend(format!("Unknown backend: {}", name))),
+        }
+    }
+}
+
+impl GgmlBackend for HybridExecutor {
+    type Buffer = Box<dyn Any>;
+
+    fn alloc(&mut self, desc: &TensorDesc) -> GgmlResult<()> {
+        // Allocate on CPU for simplicity - data can be transferred to GPU as needed
+        if let Some(cpu) = self.cpu_backend.as_mut() {
+            cpu.alloc(desc)
+        } else {
+            Err(GgmlError::Backend("No backend available for allocation".to_string()))
+        }
+    }
+
+    fn bind(&mut self, desc: &TensorDesc, buffer: Self::Buffer) -> GgmlResult<()> {
+        if let Some(cpu) = self.cpu_backend.as_mut() {
+            cpu.bind(desc, buffer)
+        } else {
+            Err(GgmlError::Backend("No backend available".to_string()))
+        }
+    }
+
+    fn free(&mut self, id: TensorId) -> GgmlResult<()> {
+        if let Some(cpu) = self.cpu_backend.as_mut() {
+            cpu.free(id)
+        } else {
+            Err(GgmlError::Backend("No backend available".to_string()))
+        }
+    }
+
+    fn tensor_desc(&self, id: TensorId) -> Option<&TensorDesc> {
+        self.cpu_backend.as_ref()?.tensor_desc(id)
+    }
+
+    fn buffer(&self, id: TensorId) -> Option<&Self::Buffer> {
+        self.cpu_backend.as_ref()?.buffer(id)
+    }
+
+    fn buffer_mut(&mut self, id: TensorId) -> Option<&mut Self::Buffer> {
+        self.cpu_backend.as_mut()?.buffer_mut(id)
+    }
+
+    fn execute_op(
+        &mut self,
+        op: &Op,
+        inputs: &[TensorId],
+        outputs: &[TensorId],
+    ) -> GgmlResult<()> {
+        // Select backend for this operation
+        let backend_name = self.select_backend_for_op(op)?;
+        self.active_backend = Some(backend_name.clone());
+
+        let backend = self.get_backend_mut(&backend_name)?;
+
+        // Execute the operation on the selected backend
+        backend.execute_op(op, inputs, outputs)
+    }
+
+    fn synchronize(&mut self) -> GgmlResult<()> {
+        // Synchronize all backends to ensure all operations complete
+        if let Some(cpu) = self.cpu_backend.as_mut() {
+            cpu.synchronize()?;
+        }
+        if let Some(gpu) = self.gpu_backend.as_mut() {
+            gpu.synchronize()?;
+        }
+        Ok(())
     }
 }
 
