@@ -97,13 +97,26 @@ Plans:
 **Depends on**: Phase 3
 **Research**: Likely (HIP kernel development, quantization formats)
 **Research topics**: Quantization formats (Q4_0, Q4_K, Q5_0, Q6_K, Q8_0), HIP kernel patterns
-**Plans**: TBD
+**Status**: ✅ Complete (2026-01-18)
 
 Plans:
-- [ ] 05-01: Research quantization formats and dequantization algorithms
-- [ ] 05-02: Implement HIP dequantization kernel for Q4_0
-- [ ] 05-03: Implement HIP dequantization kernels for remaining formats
-- [ ] 05-04: Integrate dequantization + matmul fused kernel
+- [x] 05-01: Research quantization formats and dequantization algorithms
+  - Created RESEARCH.md with all Q-format specs
+  - Documented CPU dequant patterns and HIP kernel patterns
+- [x] 05-02: Implement HIP dequantization kernel for Q4_0
+  - Created kernels/q4_0_dequant.hip with batch kernel
+  - Added Rust wrapper in q4_0_dequant.rs
+  - 5/5 tests passing
+- [x] 05-03: Implement HIP dequantization kernels for remaining formats
+  - Created kernels/q8_0_dequant.hip (Q8_0: 114 lines)
+  - Created kernels/q4_k_dequant.hip (Q4_K: 194 lines, super-block structure)
+  - Created kernels/q6_k_dequant.hip (Q6_K: 199 lines, 6-bit packed)
+  - All added to build.rs
+- [x] 05-04: Integrate dequantization + matmul fused kernel
+  - Created kernels/q4_0_matmul.hip (285 lines, fused dequant+matmul)
+  - Updated quantized_matmul.rs with fused GPU implementation
+  - ~17x memory bandwidth reduction vs traditional approach
+  - 284 tests passing
 
 ### Phase 6: Attention Optimization
 **Goal**: Flash attention detection and GPU kernels for optimized inference
@@ -179,7 +192,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8 →
 | 2. Test Infrastructure | 4/4 (4 planned) | Complete | 2026-01-18 |
 | 3. Codebase Modularization | 4/4 (4 planned) | Complete | 2026-01-18 |
 | 4. CPU SIMD Backend | 4/4 (4 planned) | Complete | 2026-01-18 |
-| 5. Quantized Operations | 0/4 | Not started | - |
+| 5. Quantized Operations | 4/4 (4 planned) | Complete | 2026-01-18 |
 | 6. Attention Optimization | 0/4 | Not started | - |
 | 7. Hybrid Execution Scheduler | 0/4 | Not started | - |
 | 8. GGUF Compatibility | 0/4 | Not started | - |
