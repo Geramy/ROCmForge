@@ -4,6 +4,7 @@
 //! - Check GPU availability before running
 //! - Use a single shared backend (no multiple allocations)
 //! - Check for memory leaks after each test
+//! - Consolidate duplicate fixture code from multiple test files
 //!
 //! # Phase 20: GPU Testing Safety Infrastructure
 //!
@@ -32,6 +33,30 @@
 //!     fixture.assert_no_leak(5);
 //! }
 //! ```
+
+// Submodules
+mod fixtures;
+mod tempfile_helpers;
+
+// Re-export fixtures
+pub use fixtures::{
+    create_backend,
+    try_create_backend,
+    create_test_gguf,
+    create_test_gguf_with_f32,
+    create_embedding_gguf,
+    create_test_tensor,
+};
+
+// Re-export tempfile helpers
+pub use tempfile_helpers::{
+    create_temp_file,
+    create_temp_dir,
+    create_temp_file_with_suffix,
+    temp_path,
+    NamedTempFile,
+    TempDir,
+};
 
 use once_cell::sync::Lazy;
 use rocmforge::backend::HipBackend;
