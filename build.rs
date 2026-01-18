@@ -117,6 +117,21 @@ fn compile_hip_kernels() {
             "Q4_0_MATMUL_HSACO",
             "q4_0_matmul_kernel",
         ),
+        (
+            "kernels/q5_k_dequant.hip",
+            "Q5_K_DEQUANT_HSACO",
+            "q5_k_to_fp32_kernel",
+        ),
+        (
+            "kernels/q3_k_dequant.hip",
+            "Q3_K_DEQUANT_HSACO",
+            "q3_k_to_fp32_kernel",
+        ),
+        (
+            "kernels/q2_k_dequant.hip",
+            "Q2_K_DEQUANT_HSACO",
+            "q2_k_to_fp32_kernel",
+        ),
     ];
 
     for (src_file, env_name, kernel_name) in &kernels {
