@@ -3,21 +3,40 @@
 //! This test verifies that the inference loop is properly spawned and ready
 //! to process requests before submit_request() is called.
 //!
-//! Root cause: CLI uses `engine.run_inference_loop().await` without external
-//! `tokio::spawn()`, which can create a race condition where requests are
-//! submitted before the inference loop task is actually running.
+//! **STATUS**: CLI IS NOW FIXED (as of 2026-01-18)
 //!
-//! Expected behavior: HTTP server pattern with external `tokio::spawn()`
-//! should be used to ensure the inference loop is scheduled immediately.
+//! Historical root cause: CLI previously used `engine.run_inference_loop().await`
+//! without external `tokio::spawn()`, which could create a race condition where
+//! requests are submitted before the inference loop task is actually running.
+//!
+//! Current fix (src/bin/rocmforge_cli.rs:543-557):
+//! ```rust
+//! // CRITICAL FIX: Use external tokio::spawn() like HTTP server does
+//! let engine_clone = engine.clone();
+//! tokio::spawn(async move {
+//!     let _ = engine_clone.run_inference_loop().await;
+//! });
+//! ```
+//!
+//! The test_cli_pattern_broken_no_external_spawn below demonstrates the OLD broken
+//! pattern for documentation purposes, but it can't actually test the race
+//! condition because it blocks on .await.
 
 use rocmforge::engine::{EngineConfig, InferenceEngine};
 use std::sync::Arc;
 use std::time::Duration;
 
-/// Test the BROKEN CLI pattern (no external tokio::spawn)
+/// Test the HISTORICALLY BROKEN CLI pattern (no external tokio::spawn)
 ///
-/// This demonstrates the race condition: the inference loop task might not
-/// be scheduled yet when submit_request() is called.
+/// **NOTE**: This test demonstrates the OLD broken pattern for documentation.
+/// The CLI is now FIXED and uses external tokio::spawn() (see lines 543-557).
+///
+/// This test can't actually reproduce the race condition because it blocks
+/// on `engine.run_inference_loop().await`. The real race condition would only
+/// occur if the inference loop was spawned WITHOUT external tokio::spawn().
+///
+/// The CLI was fixed on 2026-01-18 to use external spawn, matching the HTTP
+/// server pattern (see test_http_server_pattern_stable_with_external_spawn).
 #[tokio::test]
 async fn test_cli_pattern_broken_no_external_spawn() {
     let gguf_path = std::path::Path::new("tests/data/tiny_model.gguf");
@@ -42,8 +61,9 @@ async fn test_cli_pattern_broken_no_external_spawn() {
     let engine = Arc::new(engine);
     engine.start().await.expect("start failed");
 
-    // BROKEN CLI PATTERN: No external tokio::spawn()
-    // This matches src/bin/rocmforge_cli.rs:540
+    // HISTORICALLY BROKEN CLI PATTERN: No external tokio::spawn()
+    // NOTE: CLI is now FIXED - see src/bin/rocmforge_cli.rs:543-557
+    // This pattern is documented here for historical reference only.
     engine.run_inference_loop().await;
 
     // Immediately submit a request - might race with inference loop startup
@@ -89,8 +109,12 @@ async fn test_cli_pattern_broken_no_external_spawn() {
 
 /// Test the STABLE HTTP server pattern (with external tokio::spawn)
 ///
-/// This should always work because external tokio::spawn() ensures the
-/// inference loop task is scheduled immediately.
+/// This is the CORRECT pattern that both the HTTP server and CLI now use.
+/// External tokio::spawn() ensures the inference loop task is scheduled
+/// immediately and runs concurrently with request submission.
+///
+/// **CLI FIX**: The CLI was updated on 2026-01-18 to use this pattern.
+/// See src/bin/rocmforge_cli.rs:543-557 for the implementation.
 #[tokio::test]
 async fn test_http_server_pattern_stable_with_external_spawn() {
     let gguf_path = std::path::Path::new("tests/data/tiny_model.gguf");
@@ -156,7 +180,14 @@ async fn test_http_server_pattern_stable_with_external_spawn() {
     assert!(processed, "Inference loop should process the request");
 }
 
-/// Comparison test: run both patterns and verify HTTP server pattern works
+/// Comparison test: verify HTTP server pattern works reliably
+///
+/// **NOTE**: This test creates two separate engines to compare patterns.
+/// Due to GGUF mmap limitations, the second engine creation may fail.
+/// This is a test limitation, not a bug in the spawn pattern.
+///
+/// The key verification is test_http_server_pattern_stable_with_external_spawn,
+/// which should always pass with the correct spawn pattern.
 #[tokio::test]
 async fn test_compare_spawn_patterns() {
     let gguf_path = std::path::Path::new("tests/data/tiny_model.gguf");
