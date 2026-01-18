@@ -1,8 +1,34 @@
-//! Hybrid execution scheduler for automatic CPU/GPU operation selection
+//! # Hybrid Execution Scheduler
+//!
+//! This module provides automatic CPU/GPU operation selection for maximum
+//! compatibility and performance.
+//!
+//! ## Usage
+//!
+//! ```rust
+//! use rocmforge::ggml::{HybridScheduler, ExecutionStrategy};
+//!
+//! // Create a scheduler that automatically selects the best backend
+//! let scheduler = HybridScheduler::new(ExecutionStrategy::Automatic);
+//!
+//! // Or prefer GPU with CPU fallback
+//! let scheduler = HybridScheduler::new(ExecutionStrategy::GpuPreferred);
+//! ```
+//!
+//! ## Telemetry
+//!
+//! The scheduler tracks execution decisions and performance:
+//!
+//! ```rust
+//! let summary = scheduler.execution_summary();
+//! println!("GPU: {} us, CPU: {} us", summary.gpu_time_us, summary.cpu_time_us);
+//! ```
 
 use crate::ggml::{GgmlBackend, GgmlError, GgmlResult, Op, TensorDesc, TensorId, DType};
 use std::any::Any;
+use std::collections::HashMap;
 use std::sync::Arc;
+use std::time::Instant;
 
 /// Capability descriptor for a backend operation
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -347,6 +373,92 @@ impl HybridScheduler {
             cpu_operations: cpu_count,
         }
     }
+
+    /// Get execution summary by backend
+    pub fn execution_summary(&self) -> BackendExecutionSummary {
+        let mut by_backend: HashMap<String, Vec<&ExecutionEvent>> = HashMap::new();
+        let mut total_time_us: u64 = 0;
+
+        for event in &self.telemetry {
+            by_backend
+                .entry(event.backend.clone())
+                .or_insert_with(Vec::new)
+                .push(event);
+
+            if let Some(duration) = event.actual_duration_us {
+                total_time_us += duration;
+            }
+        }
+
+        let mut gpu_time = 0;
+        let mut cpu_time = 0;
+        let mut gpu_ops = 0;
+        let mut cpu_ops = 0;
+
+        for (backend, events) in &by_backend {
+            let backend_time: u64 = events.iter()
+                .filter_map(|e| e.actual_duration_us)
+                .sum();
+
+            match backend.as_str() {
+                "gpu" => {
+                    gpu_time = backend_time;
+                    gpu_ops = events.len();
+                }
+                "cpu" => {
+                    cpu_time = backend_time;
+                    cpu_ops = events.len();
+                }
+                _ => {}
+            }
+        }
+
+        BackendExecutionSummary {
+            total_operations: self.telemetry.len(),
+            gpu_operations: gpu_ops,
+            cpu_operations: cpu_ops,
+            total_time_us,
+            gpu_time_us: gpu_time,
+            cpu_time_us: cpu_time,
+        }
+    }
+
+    /// Print a debug summary of execution
+    pub fn print_debug_summary(&self) {
+        let summary = self.execution_summary();
+
+        eprintln!("=== Hybrid Scheduler Execution Summary ===");
+        eprintln!("Total operations: {}", summary.total_operations);
+        if summary.total_operations > 0 {
+            eprintln!("GPU operations: {} ({:.1}%)",
+                summary.gpu_operations,
+                (summary.gpu_operations as f64 / summary.total_operations as f64) * 100.0
+            );
+            eprintln!("CPU operations: {} ({:.1}%)",
+                summary.cpu_operations,
+                (summary.cpu_operations as f64 / summary.total_operations as f64) * 100.0
+            );
+            eprintln!("Total time: {} us", summary.total_time_us);
+            if summary.total_time_us > 0 {
+                eprintln!("GPU time: {} us ({:.1}%)",
+                    summary.gpu_time_us,
+                    (summary.gpu_time_us as f64 / summary.total_time_us as f64) * 100.0
+                );
+                eprintln!("CPU time: {} us ({:.1}%)",
+                    summary.cpu_time_us,
+                    (summary.cpu_time_us as f64 / summary.total_time_us as f64) * 100.0
+                );
+            }
+        }
+        eprintln!("=========================================");
+    }
+
+    /// Get operations by type
+    pub fn operations_by_type(&self, op_type: OpType) -> Vec<&ExecutionEvent> {
+        self.telemetry.iter()
+            .filter(|e| e.operation == op_type)
+            .collect()
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -354,6 +466,17 @@ pub struct BackendStats {
     pub total_operations: usize,
     pub gpu_operations: usize,
     pub cpu_operations: usize,
+}
+
+/// Execution summary by backend
+#[derive(Debug, Clone)]
+pub struct BackendExecutionSummary {
+    pub total_operations: usize,
+    pub gpu_operations: usize,
+    pub cpu_operations: usize,
+    pub total_time_us: u64,
+    pub gpu_time_us: u64,
+    pub cpu_time_us: u64,
 }
 
 impl OpCapability {
@@ -494,6 +617,40 @@ impl HybridExecutor {
             _ => Err(GgmlError::Backend(format!("Unknown backend: {}", name))),
         }
     }
+
+    /// Execute operation with telemetry recording
+    fn execute_op_with_telemetry(
+        &mut self,
+        op: &Op,
+        inputs: &[TensorId],
+        outputs: &[TensorId],
+    ) -> GgmlResult<()> {
+        let start = Instant::now();
+        let op_type = OpType::from_op(op);
+
+        // Select and execute
+        let backend_name = self.select_backend_for_op(op)?;
+        self.active_backend = Some(backend_name.clone());
+
+        let backend = self.get_backend_mut(&backend_name)?;
+
+        let result = backend.execute_op(op, inputs, outputs);
+        let duration = start.elapsed();
+
+        // Record telemetry
+        if let Some(op_type) = op_type {
+            let event = ExecutionEvent {
+                timestamp: Instant::now(),
+                operation: op_type,
+                backend: backend_name.clone(),
+                reason: SelectionReason::CpuFallback,  // Simplified for now
+                actual_duration_us: Some(duration.as_micros() as u64),
+            };
+            self.scheduler_mut().record_execution(event);
+        }
+
+        result
+    }
 }
 
 impl GgmlBackend for HybridExecutor {
@@ -542,14 +699,7 @@ impl GgmlBackend for HybridExecutor {
         inputs: &[TensorId],
         outputs: &[TensorId],
     ) -> GgmlResult<()> {
-        // Select backend for this operation
-        let backend_name = self.select_backend_for_op(op)?;
-        self.active_backend = Some(backend_name.clone());
-
-        let backend = self.get_backend_mut(&backend_name)?;
-
-        // Execute the operation on the selected backend
-        backend.execute_op(op, inputs, outputs)
+        self.execute_op_with_telemetry(op, inputs, outputs)
     }
 
     fn synchronize(&mut self) -> GgmlResult<()> {
