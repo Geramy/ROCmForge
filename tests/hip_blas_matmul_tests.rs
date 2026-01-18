@@ -1,6 +1,7 @@
 //! hipBLAS and matrix multiplication tests for ROCmForge
 //! Tests GPU matmul against CPU reference implementation
 
+use anyhow::Context;
 use rocmforge::backend::hip_backend::HipBuffer;
 use rocmforge::backend::hip_blas::HipBlasHandle;
 use rocmforge::tensor::matmul::{cpu_matmul_f32, matmul_f32};
@@ -52,57 +53,63 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_hip_blas_handle_creation_and_drop() {
+    fn test_hip_blas_handle_creation_and_drop() -> anyhow::Result<()> {
         // Test that we can create and destroy a hipBLAS handle
-        let handle = HipBlasHandle::new();
+        let handle = HipBlasHandle::new()
+            .context("Failed to create hipBLAS handle")?;
 
-        assert!(handle.is_ok(), "hipBLAS handle creation should succeed");
-
-        let handle = handle.unwrap();
         assert!(!handle.as_ptr().is_null(), "Handle should not be null");
 
         // Handle should be destroyed when dropped
+        Ok(())
     }
 
     #[test]
-    fn test_hipblas_sgemm_simple() {
+    fn test_hipblas_sgemm_simple() -> anyhow::Result<()> {
         // Test hipBLAS SGEMM with minimal parameters to check if it's working
-        let handle = HipBlasHandle::new().unwrap();
+        let handle = HipBlasHandle::new()
+            .context("Failed to create hipBLAS handle")?;
 
         // Create tiny 1x1 matrices
         let a = vec![2.0f32];
         let b = vec![3.0f32];
 
-        let gpu_a = HipBuffer::new(1 * std::mem::size_of::<f32>()).unwrap();
-        let gpu_b = HipBuffer::new(1 * std::mem::size_of::<f32>()).unwrap();
+        let gpu_a = HipBuffer::new(1 * std::mem::size_of::<f32>())
+            .context("Failed to allocate GPU buffer for matrix A")?;
+        let gpu_b = HipBuffer::new(1 * std::mem::size_of::<f32>())
+            .context("Failed to allocate GPU buffer for matrix B")?;
 
-        gpu_a.copy_from_host(&a).unwrap();
-        gpu_b.copy_from_host(&b).unwrap();
+        gpu_a.copy_from_host(&a)
+            .context("Failed to copy matrix A to GPU")?;
+        gpu_b.copy_from_host(&b)
+            .context("Failed to copy matrix B to GPU")?;
 
         // Validate dimensions before matmul
         let m = 1;
         let k = 1;
         let n = 1;
-        validate_matmul_dims(m, k, n, a.len(), b.len(), 1).expect("Dimension validation failed");
+        validate_matmul_dims(m, k, n, a.len(), b.len(), 1)
+            .context("Dimension validation failed")?;
 
         // Simple 1x1 * 1x1 = 1x1 matrix multiplication
-        let result = matmul_f32(&handle, &gpu_a, &gpu_b, m, k, n);
+        let gpu_c = matmul_f32(&handle, &gpu_a, &gpu_b, m, k, n)
+            .context("Simple 1x1 matmul failed")?;
 
-        assert!(result.is_ok(), "Simple 1x1 matmul should succeed");
-
-        let gpu_c = result.unwrap();
         let mut host_result = vec![0.0f32; 1];
-        gpu_c.copy_to_host(&mut host_result).unwrap();
+        gpu_c.copy_to_host(&mut host_result)
+            .context("Failed to copy result from GPU")?;
 
         assert!(
             (host_result[0] - 6.0).abs() < 1e-6,
             "1x1 matmul: 2*3=6, got {}",
             host_result[0]
         );
+
+        Ok(())
     }
 
     #[test]
-    fn test_gpu_matmul_matches_cpu_small() {
+    fn test_gpu_matmul_matches_cpu_small() -> anyhow::Result<()> {
         // Test 2x2 * 2x2 case
         let m = 2;
         let n = 2;
@@ -114,7 +121,7 @@ mod tests {
 
         // Validate dimensions
         validate_matmul_dims(m, k, n, a.len(), b.len(), (m * n) as usize)
-            .expect("Dimension validation failed");
+            .context("Dimension validation failed")?;
 
         // Expected result: [[19,22],[43,50]]
         let expected = vec![19.0, 22.0, 43.0, 50.0];
@@ -135,22 +142,28 @@ mod tests {
         }
 
         // Test GPU matmul (will fail until implemented)
-        let handle = HipBlasHandle::new().unwrap();
+        let handle = HipBlasHandle::new()
+            .context("Failed to create hipBLAS handle")?;
 
-        let gpu_a = HipBuffer::new((m * k) as usize * std::mem::size_of::<f32>()).unwrap();
-        let gpu_b = HipBuffer::new((k * n) as usize * std::mem::size_of::<f32>()).unwrap();
+        let gpu_a = HipBuffer::new((m * k) as usize * std::mem::size_of::<f32>())
+            .context("Failed to allocate GPU buffer for matrix A")?;
+        let gpu_b = HipBuffer::new((k * n) as usize * std::mem::size_of::<f32>())
+            .context("Failed to allocate GPU buffer for matrix B")?;
 
-        let gpu_result = matmul_f32(&handle, &gpu_a, &gpu_b, m as i32, n as i32, k as i32);
         // Copy data to GPU
-        gpu_a.copy_from_host(&a).unwrap();
-        gpu_b.copy_from_host(&b).unwrap();
+        gpu_a.copy_from_host(&a)
+            .context("Failed to copy matrix A to GPU")?;
+        gpu_b.copy_from_host(&b)
+            .context("Failed to copy matrix B to GPU")?;
 
         // Perform GPU matmul
-        let gpu_c = matmul_f32(&handle, &gpu_a, &gpu_b, m as i32, n as i32, k as i32).unwrap();
+        let gpu_c = matmul_f32(&handle, &gpu_a, &gpu_b, m as i32, n as i32, k as i32)
+            .context("GPU matmul operation failed")?;
 
         // Copy result back from GPU
         let mut gpu_result = vec![0.0f32; (m * n) as usize];
-        gpu_c.copy_to_host(&mut gpu_result).unwrap();
+        gpu_c.copy_to_host(&mut gpu_result)
+            .context("Failed to copy result from GPU")?;
 
         // Compare GPU vs CPU results
         assert_eq!(gpu_result.len(), expected.len());
@@ -163,10 +176,12 @@ mod tests {
                 val
             );
         }
+
+        Ok(())
     }
 
     #[test]
-    fn test_gpu_matmul_larger_matrix() {
+    fn test_gpu_matmul_larger_matrix() -> anyhow::Result<()> {
         // Test 4x3 * 3x2 case
         let m = 4;
         let n = 2;
@@ -193,21 +208,28 @@ mod tests {
         assert_eq!(cpu_result.len(), (m * n) as usize);
 
         // Test GPU matmul
-        let handle = HipBlasHandle::new().unwrap();
+        let handle = HipBlasHandle::new()
+            .context("Failed to create hipBLAS handle")?;
 
-        let gpu_a = HipBuffer::new((m * k) as usize * std::mem::size_of::<f32>()).unwrap();
-        let gpu_b = HipBuffer::new((k * n) as usize * std::mem::size_of::<f32>()).unwrap();
+        let gpu_a = HipBuffer::new((m * k) as usize * std::mem::size_of::<f32>())
+            .context("Failed to allocate GPU buffer for matrix A")?;
+        let gpu_b = HipBuffer::new((k * n) as usize * std::mem::size_of::<f32>())
+            .context("Failed to allocate GPU buffer for matrix B")?;
 
         // Copy data to GPU
-        gpu_a.copy_from_host(&a).unwrap();
-        gpu_b.copy_from_host(&b).unwrap();
+        gpu_a.copy_from_host(&a)
+            .context("Failed to copy matrix A to GPU")?;
+        gpu_b.copy_from_host(&b)
+            .context("Failed to copy matrix B to GPU")?;
 
         // Perform GPU matmul
-        let gpu_c = matmul_f32(&handle, &gpu_a, &gpu_b, m as i32, n as i32, k as i32).unwrap();
+        let gpu_c = matmul_f32(&handle, &gpu_a, &gpu_b, m as i32, n as i32, k as i32)
+            .context("GPU matmul operation failed")?;
 
         // Copy result back from GPU
         let mut gpu_result = vec![0.0f32; (m * n) as usize];
-        gpu_c.copy_to_host(&mut gpu_result).unwrap();
+        gpu_c.copy_to_host(&mut gpu_result)
+            .context("Failed to copy result from GPU")?;
 
         // Compare GPU vs CPU results
         assert_eq!(gpu_result.len(), cpu_result.len());
@@ -220,20 +242,25 @@ mod tests {
                 gpu_val
             );
         }
+
+        Ok(())
     }
 
     #[test]
-    fn test_matmul_invalid_dims_error() {
+    fn test_matmul_invalid_dims_error() -> anyhow::Result<()> {
         // Test dimension mismatch: 2x3 * 4x2 (k=3 vs k'=4)
         let m = 2;
         let n = 2;
         let k = 3;
         let k_prime = 4; // Mismatched inner dimension
 
-        let handle = HipBlasHandle::new().unwrap();
+        let handle = HipBlasHandle::new()
+            .context("Failed to create hipBLAS handle")?;
 
-        let gpu_a = HipBuffer::new((m * k) as usize * std::mem::size_of::<f32>()).unwrap();
-        let gpu_b = HipBuffer::new((k_prime * n) as usize * std::mem::size_of::<f32>()).unwrap();
+        let gpu_a = HipBuffer::new((m * k) as usize * std::mem::size_of::<f32>())
+            .context("Failed to allocate GPU buffer for matrix A")?;
+        let gpu_b = HipBuffer::new((k_prime * n) as usize * std::mem::size_of::<f32>())
+            .context("Failed to allocate GPU buffer for matrix B")?;
 
         // Validate dimensions - should detect mismatch
         let validation_result = validate_matmul_dims(
@@ -259,6 +286,71 @@ mod tests {
         match result {
             Ok(_) => panic!("Expected dimension mismatch error"),
             Err(_) => (), // Expected
+        }
+
+        Ok(())
+    }
+
+    /// TDD TEST: GGML matmul wrapper with synchronization
+    ///
+    /// This test verifies that the GGML matmul wrapper properly synchronizes
+    /// between hipBLAS operations (on custom stream) and hipMemcpy (on default stream).
+    ///
+    /// BUG: Without synchronization, copy_from_buffer may read incomplete data.
+    /// FIX: Add backend.synchronize() after matmul_f32 before copy_from_buffer.
+    #[test]
+    fn test_ggml_matmul_wrapper_synchronization() {
+        use rocmforge::backend::HipBackend;
+        use rocmforge::ggml::hip_backend::ops::matmul::matmul as ggml_matmul;
+
+        // Initialize backend
+        let backend = HipBackend::new().expect("Failed to create HIP backend");
+
+        // Test 2x2 * 2x2 case
+        let m = 2;
+        let n = 2;
+        let k = 2;
+
+        // Create test matrices
+        let a = vec![1.0, 2.0, 3.0, 4.0]; // 2x2 row-major: [[1,2],[3,4]]
+        let b = vec![5.0, 6.0, 7.0, 8.0]; // 2x2 row-major: [[5,6],[7,8]]
+
+        // Expected result: [[19,22],[43,50]]
+        let expected = vec![19.0, 22.0, 43.0, 50.0];
+
+        // Allocate GPU buffers
+        let gpu_a = HipBuffer::new((m * k) as usize * std::mem::size_of::<f32>())
+            .expect("Failed to allocate GPU buffer for A");
+        let gpu_b = HipBuffer::new((k * n) as usize * std::mem::size_of::<f32>())
+            .expect("Failed to allocate GPU buffer for B");
+        let gpu_output = HipBuffer::new((m * n) as usize * std::mem::size_of::<f32>())
+            .expect("Failed to allocate GPU buffer for output");
+
+        // Copy input data to GPU
+        // Explicitly type the slices to ensure T = f32
+        let a_slice: &[f32] = &a;
+        let b_slice: &[f32] = &b;
+        gpu_a.copy_from_host(a_slice).expect("Failed to copy A to GPU");
+        gpu_b.copy_from_host(b_slice).expect("Failed to copy B to GPU");
+
+        // Perform GGML matmul (this should synchronize properly)
+        ggml_matmul(&backend, &gpu_a, &gpu_b, m as i32, n as i32, k as i32, &gpu_output)
+            .expect("GGML matmul failed");
+
+        // Copy result back from GPU
+        let mut result = vec![0.0f32; (m * n) as usize];
+        gpu_output.copy_to_host(&mut result).expect("Failed to copy result from GPU");
+
+        // Verify result matches expected
+        assert_eq!(result.len(), expected.len(), "Result length mismatch");
+        for (i, (&actual, &exp)) in result.iter().zip(expected.iter()).enumerate() {
+            assert!(
+                (actual - exp).abs() < 1e-4,
+                "Element {} mismatch: expected {}, got {}",
+                i,
+                exp,
+                actual
+            );
         }
     }
 }
