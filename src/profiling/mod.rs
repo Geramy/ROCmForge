@@ -56,6 +56,7 @@ pub mod rocprof_integration;
 pub use baseline::{
     PerformanceBaseline, BaselineMetrics, BaselineCollection,
     ComparisonResult, HardwareInfo, BaselineError, RegressionThreshold,
+    RegressionReport, BenchmarkBaseline,
 };
 
 // Public exports from kernel_timer

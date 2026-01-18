@@ -1,0 +1,307 @@
+{
+  "baselines": {
+    "attention_cpu_32x32": {
+      "name": "attention_cpu_32x32",
+      "timestamp": 1737220800,
+      "hardware": {
+        "gpu_name": null,
+        "gpu_architecture": null,
+        "rocm_version": null,
+        "cpu_arch": "x86_64",
+        "os": "linux",
+        "rustc_version": "1.82.0"
+      },
+      "metrics": {
+        "avg_ms": 0.0335,
+        "min_ms": 0.0320,
+        "max_ms": 0.0360,
+        "p50_ms": 0.0335,
+        "p95_ms": 0.0355,
+        "p99_ms": 0.0360,
+        "iterations": 100
+      },
+      "metadata": {
+        "backend": "cpu",
+        "seq_len": "32",
+        "dim": "32"
+      }
+    },
+    "attention_cpu_64x64": {
+      "name": "attention_cpu_64x64",
+      "timestamp": 1737220800,
+      "hardware": {
+        "gpu_name": null,
+        "gpu_architecture": null,
+        "rocm_version": null,
+        "cpu_arch": "x86_64",
+        "os": "linux",
+        "rustc_version": "1.82.0"
+      },
+      "metrics": {
+        "avg_ms": 0.264,
+        "min_ms": 0.250,
+        "max_ms": 0.280,
+        "p50_ms": 0.263,
+        "p95_ms": 0.278,
+        "p99_ms": 0.280,
+        "iterations": 100
+      },
+      "metadata": {
+        "backend": "cpu",
+        "seq_len": "64",
+        "dim": "64"
+      }
+    },
+    "attention_cpu_128x128": {
+      "name": "attention_cpu_128x128",
+      "timestamp": 1737220800,
+      "hardware": {
+        "gpu_name": null,
+        "gpu_architecture": null,
+        "rocm_version": null,
+        "cpu_arch": "x86_64",
+        "os": "linux",
+        "rustc_version": "1.82.0"
+      },
+      "metrics": {
+        "avg_ms": 2.59,
+        "min_ms": 2.45,
+        "max_ms": 2.75,
+        "p50_ms": 2.58,
+        "p95_ms": 2.72,
+        "p99_ms": 2.74,
+        "iterations": 50
+      },
+      "metadata": {
+        "backend": "cpu",
+        "seq_len": "128",
+        "dim": "128"
+      }
+    },
+    "attention_cpu_256x256": {
+      "name": "attention_cpu_256x256",
+      "timestamp": 1737220800,
+      "hardware": {
+        "gpu_name": null,
+        "gpu_architecture": null,
+        "rocm_version": null,
+        "cpu_arch": "x86_64",
+        "os": "linux",
+        "rustc_version": "1.82.0"
+      },
+      "metrics": {
+        "avg_ms": 22.3,
+        "min_ms": 21.0,
+        "max_ms": 24.0,
+        "p50_ms": 22.2,
+        "p95_ms": 23.5,
+        "p99_ms": 23.8,
+        "iterations": 20
+      },
+      "metadata": {
+        "backend": "cpu",
+        "seq_len": "256",
+        "dim": "256"
+      }
+    },
+    "attention_cpu_512x512": {
+      "name": "attention_cpu_512x512",
+      "timestamp": 1737220800,
+      "hardware": {
+        "gpu_name": null,
+        "gpu_architecture": null,
+        "rocm_version": null,
+        "cpu_arch": "x86_64",
+        "os": "linux",
+        "rustc_version": "1.82.0"
+      },
+      "metrics": {
+        "avg_ms": 349.0,
+        "min_ms": 330.0,
+        "max_ms": 370.0,
+        "p50_ms": 348.0,
+        "p95_ms": 365.0,
+        "p99_ms": 368.0,
+        "iterations": 10
+      },
+      "metadata": {
+        "backend": "cpu",
+        "seq_len": "512",
+        "dim": "512"
+      }
+    },
+    "matmul_cpu_512x512": {
+      "name": "matmul_cpu_512x512",
+      "timestamp": 1737220800,
+      "hardware": {
+        "gpu_name": null,
+        "gpu_architecture": null,
+        "rocm_version": null,
+        "cpu_arch": "x86_64",
+        "os": "linux",
+        "rustc_version": "1.82.0"
+      },
+      "metrics": {
+        "avg_ms": 45.2,
+        "min_ms": 43.5,
+        "max_ms": 48.0,
+        "p50_ms": 45.0,
+        "p95_ms": 47.5,
+        "p99_ms": 47.8,
+        "iterations": 20
+      },
+      "metadata": {
+        "backend": "cpu",
+        "m": "512",
+        "n": "512",
+        "k": "512"
+      }
+    },
+    "matmul_cpu_1024x1024": {
+      "name": "matmul_cpu_1024x1024",
+      "timestamp": 1737220800,
+      "hardware": {
+        "gpu_name": null,
+        "gpu_architecture": null,
+        "rocm_version": null,
+        "cpu_arch": "x86_64",
+        "os": "linux",
+        "rustc_version": "1.82.0"
+      },
+      "metrics": {
+        "avg_ms": 358.5,
+        "min_ms": 345.0,
+        "max_ms": 380.0,
+        "p50_ms": 357.0,
+        "p95_ms": 375.0,
+        "p99_ms": 378.0,
+        "iterations": 10
+      },
+      "metadata": {
+        "backend": "cpu",
+        "m": "1024",
+        "n": "1024",
+        "k": "1024"
+      }
+    },
+    "dequant_q4_0_cpu": {
+      "name": "dequant_q4_0_cpu",
+      "timestamp": 1737220800,
+      "hardware": {
+        "gpu_name": null,
+        "gpu_architecture": null,
+        "rocm_version": null,
+        "cpu_arch": "x86_64",
+        "os": "linux",
+        "rustc_version": "1.82.0"
+      },
+      "metrics": {
+        "avg_ms": 12.8,
+        "min_ms": 12.2,
+        "max_ms": 13.8,
+        "p50_ms": 12.7,
+        "p95_ms": 13.5,
+        "p99_ms": 13.7,
+        "iterations": 50
+      },
+      "metadata": {
+        "backend": "cpu",
+        "format": "Q4_0",
+        "elements": "16777216"
+      }
+    },
+    "dequant_q8_0_cpu": {
+      "name": "dequant_q8_0_cpu",
+      "timestamp": 1737220800,
+      "hardware": {
+        "gpu_name": null,
+        "gpu_architecture": null,
+        "rocm_version": null,
+        "cpu_arch": "x86_64",
+        "os": "linux",
+        "rustc_version": "1.82.0"
+      },
+      "metrics": {
+        "avg_ms": 15.2,
+        "min_ms": 14.5,
+        "max_ms": 16.5,
+        "p50_ms": 15.0,
+        "p95_ms": 16.2,
+        "p99_ms": 16.4,
+        "iterations": 50
+      },
+      "metadata": {
+        "backend": "cpu",
+        "format": "Q8_0",
+        "elements": "16777216"
+      }
+    },
+    "inference_ttft_128": {
+      "name": "inference_ttft_128",
+      "timestamp": 1737220800,
+      "hardware": {
+        "gpu_name": null,
+        "gpu_architecture": null,
+        "rocm_version": null,
+        "cpu_arch": "x86_64",
+        "os": "linux",
+        "rustc_version": "1.82.0"
+      },
+      "metrics": {
+        "avg_ms": 185.0,
+        "min_ms": 175.0,
+        "max_ms": 200.0,
+        "p50_ms": 184.0,
+        "p95_ms": 195.0,
+        "p99_ms": 198.0,
+        "iterations": 10
+      },
+      "metadata": {
+        "backend": "cpu",
+        "prompt_len": "128",
+        "metric": "ttft"
+      }
+    },
+    "inference_ttft_512": {
+      "name": "inference_ttft_512",
+      "timestamp": 1737220800,
+      "hardware": {
+        "gpu_name": null,
+        "gpu_architecture": null,
+        "rocm_version": null,
+        "cpu_arch": "x86_64",
+        "os": "linux",
+        "rustc_version": "1.82.0"
+      },
+      "metrics": {
+        "avg_ms": 680.0,
+        "min_ms": 650.0,
+        "max_ms": 720.0,
+        "p50_ms": 678.0,
+        "p95_ms": 710.0,
+        "p99_ms": 715.0,
+        "iterations": 5
+      },
+      "metadata": {
+        "backend": "cpu",
+        "prompt_len": "512",
+        "metric": "ttft"
+      }
+    }
+  },
+  "metadata": {
+    "description": "CPU performance baselines for ROCmForge",
+    "hardware_type": "cpu",
+    "baseline_date": "2025-01-18",
+    "notes": "These are synthetic CPU baselines for regression testing. GPU baselines should be collected on actual RDNA3 hardware."
+  },
+  "hardware": {
+    "gpu_name": null,
+    "gpu_architecture": null,
+    "rocm_version": null,
+    "cpu_arch": "x86_64",
+    "os": "linux",
+    "rustc_version": "1.82.0"
+  },
+  "timestamp": 1737220800
+}

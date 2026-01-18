@@ -205,6 +205,144 @@ impl ComparisonResult {
     pub fn passed(&self) -> bool {
         !self.is_regression() && !matches!(self, ComparisonResult::HardwareMismatch { .. })
     }
+
+    /// Get a human-readable description of the result
+    pub fn description(&self) -> String {
+        match self {
+            ComparisonResult::Ok => "Performance within acceptable range".to_string(),
+            ComparisonResult::Improved { metric, improvement_pct } => {
+                format!("Improved: {} is {:.1}% faster than baseline", metric, improvement_pct)
+            }
+            ComparisonResult::Regression { metric, regression_pct, baseline_value, current_value } => {
+                format!("Regression: {} is {:.1}% slower (baseline: {:.3} ms, current: {:.3} ms)",
+                    metric, regression_pct, baseline_value, current_value)
+            }
+            ComparisonResult::HardwareMismatch { reason } => {
+                format!("Hardware mismatch: {}", reason)
+            }
+        }
+    }
+}
+
+/// Summary report for baseline comparisons
+#[derive(Debug, Clone)]
+pub struct RegressionReport {
+    /// Number of benchmarks that passed
+    pub passed: usize,
+    /// Number of benchmarks that regressed
+    pub regressed: usize,
+    /// Number of benchmarks that improved
+    pub improved: usize,
+    /// Individual benchmark results
+    pub results: Vec<(String, ComparisonResult)>,
+    /// Overall pass/fail status
+    pub overall_passed: bool,
+}
+
+impl RegressionReport {
+    /// Create a new regression report from comparison results
+    pub fn from_results(results: HashMap<String, ComparisonResult>) -> Self {
+        let mut passed = 0;
+        let mut regressed = 0;
+        let mut improved = 0;
+        let mut result_vec = Vec::new();
+
+        for (name, result) in results {
+            passed += if result.passed() { 1 } else { 0 };
+            regressed += if result.is_regression() { 1 } else { 0 };
+            improved += if result.is_improved() { 1 } else { 0 };
+            result_vec.push((name, result));
+        }
+
+        // Sort by name for consistent output
+        result_vec.sort_by(|a, b| a.0.cmp(&b.0));
+
+        let overall_passed = regressed == 0;
+
+        RegressionReport {
+            passed,
+            regressed,
+            improved,
+            results: result_vec,
+            overall_passed,
+        }
+    }
+
+    /// Print the report to stdout
+    pub fn print(&self) {
+        println!("\n=== Baseline Comparison Report ===");
+        println!("Total benchmarks: {}", self.results.len());
+        println!("Passed: {}", self.passed);
+        println!("Improved: {}", self.improved);
+        println!("Regressed: {}", self.regressed);
+        println!("Overall: {}", if self.overall_passed { "PASS" } else { "FAIL" });
+
+        if self.regressed > 0 {
+            println!("\n--- Regressions Detected ---");
+            for (name, result) in &self.results {
+                if result.is_regression() {
+                    println!("  {}: {}", name, result.description());
+                }
+            }
+        }
+
+        if self.improved > 0 {
+            println!("\n--- Improvements ---");
+            for (name, result) in &self.results {
+                if result.is_improved() {
+                    println!("  {}: {}", name, result.description());
+                }
+            }
+        }
+
+        println!("====================================\n");
+    }
+
+    /// Get the report as a string
+    pub fn to_string(&self) -> String {
+        let mut output = String::new();
+        output.push_str("=== Baseline Comparison Report ===\n");
+        output.push_str(&format!("Total benchmarks: {}\n", self.results.len()));
+        output.push_str(&format!("Passed: {}\n", self.passed));
+        output.push_str(&format!("Improved: {}\n", self.improved));
+        output.push_str(&format!("Regressed: {}\n", self.regressed));
+        output.push_str(&format!("Overall: {}\n", if self.overall_passed { "PASS" } else { "FAIL" }));
+
+        if self.regressed > 0 {
+            output.push_str("\n--- Regressions Detected ---\n");
+            for (name, result) in &self.results {
+                if result.is_regression() {
+                    output.push_str(&format!("  {}: {}\n", name, result.description()));
+                }
+            }
+        }
+
+        if self.improved > 0 {
+            output.push_str("\n--- Improvements ---\n");
+            for (name, result) in &self.results {
+                if result.is_improved() {
+                    output.push_str(&format!("  {}: {}\n", name, result.description()));
+                }
+            }
+        }
+
+        output.push_str("====================================\n");
+        output
+    }
+
+    /// Check if the report indicates any failures
+    pub fn has_failures(&self) -> bool {
+        !self.overall_passed
+    }
+
+    /// Get all failed benchmark names
+    pub fn failed_benchmarks(&self) -> Vec<&str> {
+        self.results
+            .iter()
+            .filter(|(_, r)| !r.passed())
+            .map(|(n, _)| n.as_str())
+            .collect()
+    }
 }
 
 /// A performance baseline for a single benchmark
@@ -378,14 +516,42 @@ pub struct BaselineCollection {
     /// Collection metadata
     #[serde(default)]
     pub metadata: HashMap<String, String>,
+    /// Hardware info for the entire collection
+    #[serde(default)]
+    pub hardware: HardwareInfo,
+    /// Collection creation timestamp
+    #[serde(default)]
+    pub timestamp: i64,
 }
 
 impl BaselineCollection {
     /// Create a new empty collection
     pub fn new() -> Self {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs() as i64;
+
         BaselineCollection {
             baselines: HashMap::new(),
             metadata: HashMap::new(),
+            hardware: HardwareInfo::default(),
+            timestamp: now,
+        }
+    }
+
+    /// Create a new collection with specific hardware info
+    pub fn with_hardware(hardware: HardwareInfo) -> Self {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs() as i64;
+
+        BaselineCollection {
+            baselines: HashMap::new(),
+            metadata: HashMap::new(),
+            hardware,
+            timestamp: now,
         }
     }
 
@@ -394,9 +560,76 @@ impl BaselineCollection {
         self.baselines.insert(baseline.name.clone(), baseline);
     }
 
+    /// Add or update a baseline in the collection
+    pub fn upsert(&mut self, baseline: PerformanceBaseline) {
+        self.baselines.insert(baseline.name.clone(), baseline);
+    }
+
     /// Get a baseline by name
     pub fn get(&self, name: &str) -> Option<&PerformanceBaseline> {
         self.baselines.get(name)
+    }
+
+    /// Remove a baseline from the collection
+    pub fn remove(&mut self, name: &str) -> Option<PerformanceBaseline> {
+        self.baselines.remove(name)
+    }
+
+    /// Get the number of baselines in the collection
+    pub fn len(&self) -> usize {
+        self.baselines.len()
+    }
+
+    /// Check if the collection is empty
+    pub fn is_empty(&self) -> bool {
+        self.baselines.is_empty()
+    }
+
+    /// Get all baseline names
+    pub fn names(&self) -> Vec<String> {
+        self.baselines.keys().cloned().collect()
+    }
+
+    /// Merge another collection into this one
+    ///
+    /// Existing baselines are replaced with ones from `other`
+    pub fn merge(&mut self, other: BaselineCollection) {
+        for (name, baseline) in other.baselines {
+            self.baselines.insert(name, baseline);
+        }
+        // Keep the newer timestamp
+        if other.timestamp > self.timestamp {
+            self.timestamp = other.timestamp;
+        }
+    }
+
+    /// Filter baselines by a predicate
+    pub fn filter<F>(&self, predicate: F) -> BaselineCollection
+    where
+        F: Fn(&PerformanceBaseline) -> bool,
+    {
+        let mut filtered = BaselineCollection {
+            baselines: HashMap::new(),
+            metadata: self.metadata.clone(),
+            hardware: self.hardware.clone(),
+            timestamp: self.timestamp,
+        };
+
+        for (name, baseline) in &self.baselines {
+            if predicate(baseline) {
+                filtered.baselines.insert(name.clone(), baseline.clone());
+            }
+        }
+
+        filtered
+    }
+
+    /// Get baselines by metadata key-value pair
+    pub fn find_by_metadata(&self, key: &str, value: &str) -> Vec<&PerformanceBaseline> {
+        self.baselines
+            .values()
+            .filter(|b| b.metadata.get(key).map(|v| v == value).unwrap_or(false))
+            .collect()
     }
 
     /// Save the collection to a JSON file
@@ -448,6 +681,43 @@ impl BaselineCollection {
         }
 
         results
+    }
+
+    /// Compare current metrics against all baselines and generate a report
+    ///
+    /// Returns a `RegressionReport` with detailed results
+    pub fn compare_and_report(
+        &self,
+        current: &HashMap<String, BaselineMetrics>,
+        threshold_pct: f64,
+    ) -> RegressionReport {
+        let results = self.compare_all(current, threshold_pct);
+        RegressionReport::from_results(results)
+    }
+
+    /// Compare a single benchmark against its baseline
+    pub fn compare_one(
+        &self,
+        name: &str,
+        current: &BaselineMetrics,
+        threshold_pct: f64,
+    ) -> Option<ComparisonResult> {
+        self.baselines.get(name)
+            .map(|baseline| baseline.compare_metrics(name, current, threshold_pct))
+    }
+
+    /// Check hardware compatibility for this collection
+    pub fn check_hardware_compatibility(&self) -> Result<(), ComparisonResult> {
+        let current_hardware = HardwareInfo::default();
+        if !self.hardware.is_compatible(&current_hardware) {
+            return Err(ComparisonResult::HardwareMismatch {
+                reason: format!(
+                    "Collection hardware ({:?}) != current hardware ({:?})",
+                    self.hardware, current_hardware
+                ),
+            });
+        }
+        Ok(())
     }
 }
 
@@ -527,6 +797,145 @@ impl RegressionThreshold {
             _ => self.avg_threshold_pct,
         };
         diff_pct > threshold
+    }
+}
+
+/// Helper functions for benchmarks to create and save baselines
+pub struct BenchmarkBaseline {
+    /// Collection being built
+    collection: BaselineCollection,
+    /// Default hardware info
+    hardware: HardwareInfo,
+    /// Threshold for comparisons
+    threshold: f64,
+}
+
+impl BenchmarkBaseline {
+    /// Create a new benchmark baseline helper
+    pub fn new() -> Self {
+        BenchmarkBaseline {
+            collection: BaselineCollection::new(),
+            hardware: HardwareInfo::default(),
+            threshold: 0.10, // 10% default threshold
+        }
+    }
+
+    /// Create a new benchmark baseline helper with specific hardware info
+    pub fn with_hardware(hardware: HardwareInfo) -> Self {
+        let mut collection = BaselineCollection::with_hardware(hardware.clone());
+        collection.metadata.insert("created_by".to_string(), "ROCmForge benchmark".to_string());
+        BenchmarkBaseline {
+            collection,
+            hardware,
+            threshold: 0.10,
+        }
+    }
+
+    /// Set the regression threshold
+    pub fn with_threshold(mut self, threshold: f64) -> Self {
+        self.threshold = threshold;
+        self
+    }
+
+    /// Add a benchmark result to the collection
+    ///
+    /// # Arguments
+    ///
+    /// * `name` - Benchmark name
+    /// * `durations` - Array of duration measurements in milliseconds
+    pub fn add_benchmark(&mut self, name: impl Into<String>, durations_ms: &[f64]) {
+        let metrics = BaselineMetrics::from_ms_durations(durations_ms);
+        let baseline = PerformanceBaseline::new(name, metrics)
+            .with_hardware(self.hardware.clone());
+        self.collection.add(baseline);
+    }
+
+    /// Add a benchmark result with metadata
+    pub fn add_benchmark_with_metadata(
+        &mut self,
+        name: impl Into<String>,
+        durations_ms: &[f64],
+        metadata: HashMap<String, String>,
+    ) {
+        let metrics = BaselineMetrics::from_ms_durations(durations_ms);
+        let mut baseline = PerformanceBaseline::new(name, metrics)
+            .with_hardware(self.hardware.clone());
+        baseline.metadata = metadata;
+        self.collection.add(baseline);
+    }
+
+    /// Add metrics directly to the collection
+    pub fn add_metrics(&mut self, name: impl Into<String>, metrics: BaselineMetrics) {
+        let baseline = PerformanceBaseline::new(name, metrics)
+            .with_hardware(self.hardware.clone());
+        self.collection.add(baseline);
+    }
+
+    /// Save the collection to a file
+    pub fn save<P: AsRef<Path>>(&self, path: P) -> Result<(), BaselineError> {
+        self.collection.save(path)
+    }
+
+    /// Get the collection
+    pub fn collection(&self) -> &BaselineCollection {
+        &self.collection
+    }
+
+    /// Mutably borrow the collection
+    pub fn collection_mut(&mut self) -> &mut BaselineCollection {
+        &mut self.collection
+    }
+
+    /// Compare current run against the baselines
+    pub fn compare(&self, current: &HashMap<String, BaselineMetrics>) -> RegressionReport {
+        self.collection.compare_and_report(current, self.threshold)
+    }
+}
+
+impl Default for BenchmarkBaseline {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl BaselineMetrics {
+    /// Create metrics from an array of durations in milliseconds
+    ///
+    /// This is a convenience function for benchmarks that measure time directly
+    /// in milliseconds (e.g., using `Instant::elapsed().as_secs_f64() * 1000.0`).
+    pub fn from_ms_durations(durations_ms: &[f64]) -> Self {
+        if durations_ms.is_empty() {
+            return BaselineMetrics {
+                avg_ms: 0.0,
+                min_ms: 0.0,
+                max_ms: 0.0,
+                p50_ms: 0.0,
+                p95_ms: 0.0,
+                p99_ms: 0.0,
+                iterations: 0,
+            };
+        }
+
+        let mut sorted = durations_ms.to_vec();
+        sorted.sort_by(|a, b| a.partial_cmp(b).unwrap());
+
+        let min = sorted.first().unwrap();
+        let max = sorted.last().unwrap();
+        let avg = sorted.iter().sum::<f64>() / sorted.len() as f64;
+
+        let p50 = &sorted[sorted.len() / 2];
+        let p95 = &sorted[(sorted.len() * 95) / 100];
+        let p99 = &sorted[(sorted.len() * 99) / 100];
+
+        BaselineMetrics {
+            avg_ms: avg,
+            min_ms: *min,
+            max_ms: *max,
+            p50_ms: *p50,
+            p95_ms: *p95,
+            p99_ms: *p99,
+            iterations: durations_ms.len(),
+        }
     }
 }
 
@@ -664,5 +1073,161 @@ mod tests {
         let gpu_info = HardwareInfo::with_gpu("GPU", "RDNA3", "6.0");
         assert!(info1.is_compatible(&gpu_info)); // Different GPU arch is compatible
         assert!(gpu_info.is_compatible(&info1));
+    }
+
+    // Tests for BaselineCollection
+    #[test]
+    fn test_baseline_collection_new() {
+        let collection = BaselineCollection::new();
+        assert!(collection.is_empty());
+        assert_eq!(collection.len(), 0);
+        assert!(collection.hardware.gpu_architecture.is_none());
+    }
+
+    #[test]
+    fn test_baseline_collection_add() {
+        let mut collection = BaselineCollection::new();
+        collection.add(PerformanceBaseline::new("bench1", create_test_metrics(10.0)));
+        collection.add(PerformanceBaseline::new("bench2", create_test_metrics(20.0)));
+
+        assert_eq!(collection.len(), 2);
+        assert!(collection.get("bench1").is_some());
+        assert!(collection.get("bench2").is_some());
+    }
+
+    #[test]
+    fn test_baseline_collection_names() {
+        let mut collection = BaselineCollection::new();
+        collection.add(PerformanceBaseline::new("bench1", create_test_metrics(10.0)));
+        collection.add(PerformanceBaseline::new("bench2", create_test_metrics(20.0)));
+
+        let mut names = collection.names();
+        names.sort();
+        assert_eq!(names, vec!["bench1", "bench2"]);
+    }
+
+    #[test]
+    fn test_baseline_collection_remove() {
+        let mut collection = BaselineCollection::new();
+        collection.add(PerformanceBaseline::new("bench1", create_test_metrics(10.0)));
+        collection.add(PerformanceBaseline::new("bench2", create_test_metrics(20.0)));
+
+        assert_eq!(collection.len(), 2);
+        collection.remove("bench1");
+        assert_eq!(collection.len(), 1);
+        assert!(collection.get("bench1").is_none());
+        assert!(collection.get("bench2").is_some());
+    }
+
+    #[test]
+    fn test_baseline_collection_merge() {
+        let mut collection1 = BaselineCollection::new();
+        collection1.add(PerformanceBaseline::new("bench1", create_test_metrics(10.0)));
+
+        let mut collection2 = BaselineCollection::new();
+        collection2.add(PerformanceBaseline::new("bench2", create_test_metrics(20.0)));
+
+        collection1.merge(collection2);
+        assert_eq!(collection1.len(), 2);
+        assert!(collection1.get("bench1").is_some());
+        assert!(collection1.get("bench2").is_some());
+    }
+
+    #[test]
+    fn test_baseline_collection_find_by_metadata() {
+        let mut collection = BaselineCollection::new();
+        let baseline1 = PerformanceBaseline::new("bench1", create_test_metrics(10.0))
+            .with_metadata("format", "Q4_0");
+        let baseline2 = PerformanceBaseline::new("bench2", create_test_metrics(20.0))
+            .with_metadata("format", "Q8_0");
+        collection.add(baseline1);
+        collection.add(baseline2);
+
+        let q4_results = collection.find_by_metadata("format", "Q4_0");
+        assert_eq!(q4_results.len(), 1);
+        assert_eq!(q4_results[0].name, "bench1");
+
+        let q8_results = collection.find_by_metadata("format", "Q8_0");
+        assert_eq!(q8_results.len(), 1);
+        assert_eq!(q8_results[0].name, "bench2");
+    }
+
+    // Tests for RegressionReport
+    #[test]
+    fn test_regression_report_from_results() {
+        let mut results = HashMap::new();
+        results.insert("bench1".to_string(), ComparisonResult::Ok);
+        results.insert("bench2".to_string(), ComparisonResult::Improved {
+            metric: "avg_ms".to_string(),
+            improvement_pct: 15.0,
+        });
+        results.insert("bench3".to_string(), ComparisonResult::Regression {
+            metric: "avg_ms".to_string(),
+            regression_pct: 20.0,
+            baseline_value: 10.0,
+            current_value: 12.0,
+        });
+
+        let report = RegressionReport::from_results(results);
+        assert_eq!(report.total_benchmarks(), 3);
+        assert_eq!(report.passed, 2); // Ok + Improved
+        assert_eq!(report.regressed, 1);
+        assert_eq!(report.improved, 1);
+        assert!(!report.overall_passed);
+    }
+
+    // Tests for BenchmarkBaseline
+    #[test]
+    fn test_benchmark_baseline_new() {
+        let helper = BenchmarkBaseline::new();
+        assert!(helper.collection().is_empty());
+    }
+
+    #[test]
+    fn test_benchmark_baseline_add_benchmark() {
+        let mut helper = BenchmarkBaseline::new();
+        let durations = vec![10.0, 11.0, 9.0, 10.5, 9.5];
+        helper.add_benchmark("test_bench", &durations);
+
+        assert_eq!(helper.collection().len(), 1);
+        let baseline = helper.collection().get("test_bench").unwrap();
+        assert!((baseline.metrics.avg_ms - 10.0).abs() < 0.1);
+    }
+
+    #[test]
+    fn test_benchmark_baseline_with_hardware() {
+        let hardware = HardwareInfo::with_gpu("RX 7900 XTX", "RDNA3", "6.0.0");
+        let helper = BenchmarkBaseline::with_hardware(hardware.clone());
+
+        assert_eq!(helper.collection().hardware.gpu_name, Some("RX 7900 XTX".to_string()));
+    }
+
+    // Tests for BaselineMetrics::from_ms_durations
+    #[test]
+    fn test_baseline_metrics_from_ms_durations() {
+        let durations = vec![10.0, 20.0, 30.0, 40.0, 50.0];
+        let metrics = BaselineMetrics::from_ms_durations(&durations);
+
+        assert_eq!(metrics.iterations, 5);
+        assert_eq!(metrics.min_ms, 10.0);
+        assert_eq!(metrics.max_ms, 50.0);
+        assert_eq!(metrics.avg_ms, 30.0);
+        assert_eq!(metrics.p50_ms, 30.0); // Median of sorted [10, 20, 30, 40, 50]
+    }
+
+    #[test]
+    fn test_baseline_metrics_from_ms_durations_empty() {
+        let durations: Vec<f64> = vec![];
+        let metrics = BaselineMetrics::from_ms_durations(&durations);
+
+        assert_eq!(metrics.iterations, 0);
+        assert_eq!(metrics.avg_ms, 0.0);
+    }
+}
+
+impl RegressionReport {
+    /// Get the total number of benchmarks in the report
+    pub fn total_benchmarks(&self) -> usize {
+        self.results.len()
     }
 }
