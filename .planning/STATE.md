@@ -5,16 +5,16 @@
 See: .planning/PROJECT.md (updated 2026-01-18)
 
 **Core value:** Reliable, fast inference on AMD GPUs with transparent CPU fallback.
-**Current focus:** Phase 5 - Quantized Operations
+**Current focus:** Phase 6 - Attention Optimization
 
 ## Current Position
 
-Phase: 5 of 10 (Quantized Operations)
-Plan: 4 of 4
-Status: Phase complete
-Last activity: 2026-01-18 — Completed 05-04 (Fused Q4_0 matmul kernel)
+Phase: 6 of 10 (Attention Optimization)
+Plan: 0 of 4
+Status: Planning complete, ready for execution
+Last activity: 2026-01-18 — Phase 06 planned (4 plans ready)
 
-Progress: █████████░ 70% (Phases 1-4 complete, Phase 5 complete)
+Progress: █████████░ 70% (Phases 1-5 complete, Phase 6 planned)
 
 **Phase 5 Status:** ✅ Complete
 - 05-01: Complete - Quantization research (RESEARCH.md with format specifications and implementation strategy)
@@ -607,3 +607,39 @@ The plan originally recommended `packed_simd`, but research revealed this crate 
 ---
 
 *Updated: 2026-01-18*
+
+## Phase 6: Attention Optimization
+
+**Goal:** Flash attention detection and GPU kernels for optimized inference
+**Status:** ✅ Planning complete (4 plans ready for execution)
+
+### Plans Created
+
+| Plan | Title | Type | Status |
+|------|-------|------|--------|
+| 06-01 | Research flash attention for ROCm | execute | Ready |
+| 06-02 | Flash attention backend registration | execute | Ready |
+| 06-03 | Flash attention kernel integration | execute | Ready |
+| 06-04 | Benchmark and optimize attention | execute | Ready |
+
+### Wave Structure
+
+**Wave 1 (parallel):**
+- 06-01: Research (creates RESEARCH.md, no dependencies)
+
+**Wave 2:**
+- 06-02: Backend registration (depends on 06-01)
+
+**Wave 3:**
+- 06-03: Kernel integration (depends on 06-02)
+
+**Wave 4:**
+- 06-04: Benchmarking (depends on 06-02, 06-03)
+
+### Key Files
+
+- `kernels/flash_attention.hip` - Existing flash attention kernel
+- `kernels/flash_attention_causal.hip` - Causal variant
+- `kernels/flash_attention_nocausal.hip` - Non-causal variant
+- `src/attention/backend_registry.rs` - BackendImplementation trait
+- `src/attention/flash_attention.rs` - To be created (FlashAttentionBackend)
