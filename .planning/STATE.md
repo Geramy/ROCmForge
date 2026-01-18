@@ -10,16 +10,16 @@ See: .planning/PROJECT.md (updated 2026-01-18)
 ## Current Position
 
 Phase: 5 of 10 (Quantized Operations)
-Plan: 1 of 4
+Plan: 3 of 4
 Status: In progress
-Last activity: 2026-01-18 — Completed 05-01-PLAN.md (Quantization Research)
+Last activity: 2026-01-18 — Completed 05-03 (Q8_0, Q4_K, Q6_K dequantization kernels)
 
 Progress: ████████░░ 65% (Phases 1-4 complete, Phase 5 in progress)
 
 **Phase 5 Status:** 🔄 In Progress
 - 05-01: Complete - Quantization research (RESEARCH.md with format specifications and implementation strategy)
-- 05-02: Pending - Q4_0/Q8_0 dequantization kernels
-- 05-03: Pending - K-quant dequantization kernels (Q4_K, Q6_K)
+- 05-02: Pending - Q4_0 dequantization kernel (skipped, may be completed later)
+- 05-03: Complete - K-quant dequantization kernels (Q8_0, Q4_K, Q6_K HIP kernels)
 - 05-04: Pending - Quantized matmul integration
 
 **Phase 4 Status:** ✅ Complete
@@ -37,9 +37,9 @@ Progress: ████████░░ 65% (Phases 1-4 complete, Phase 5 in pr
 ## Performance Metrics
 
 **Velocity:**
-- Total plans completed: 17
-- Average duration: ~1.74 hours/plan (including testing)
-- Total execution time: ~29.5 hours
+- Total plans completed: 18
+- Average duration: ~1.68 hours/plan (including testing)
+- Total execution time: ~30.2 hours
 
 **By Phase:**
 
@@ -49,11 +49,11 @@ Progress: ████████░░ 65% (Phases 1-4 complete, Phase 5 in pr
 | 2 (Test Infrastructure) | 4 | ~13 hours | ~3.25 hours |
 | 3 (Codebase Modularization) | 4 | ~5 hours | ~1.25 hours |
 | 4 (CPU SIMD Backend) | 4 | ~1.2 hours | ~0.3 hours |
-| 5 (Quantized Operations) | 1 | ~0.03 hours | ~2 min |
+| 5 (Quantized Operations) | 2 | ~0.2 hours | ~6 min |
 
 **Recent Trend:**
-- Last 9 plans: 02-04, 03-01, 03-02, 03-03, 03-04, 04-01, 04-02, 04-03, 04-04, 05-01
-- Trend: Fast execution, research-only plan completed in 2 minutes
+- Last 10 plans: 02-04, 03-01, 03-02, 03-03, 03-04, 04-01, 04-02, 04-03, 04-04, 05-01, 05-03
+- Trend: Fast execution, kernel implementations completed in ~10 min
 
 *Updated after each plan completion*
 
@@ -96,7 +96,7 @@ None yet.
 ## Session Continuity
 
 Last session: 2026-01-18
-Stopped at: Completed 05-01-PLAN.md (Quantization Research)
+Stopped at: Completed 05-03 (Q8_0, Q4_K, Q6_K dequantization kernels)
 Resume file: None
 
 ## Phase 2 Plan 2 Summary
@@ -481,6 +481,53 @@ The plan originally recommended `packed_simd`, but research revealed this crate 
 - Block-based quantization: 32 or 256 elements per block with per-block scaling
 - CPU patterns translate directly to GPU thread blocks
 - Build system integration follows existing pattern (add to kernels array in build.rs)
+
+## Phase 5 Plan 3 Summary
+
+**Completed:** 2026-01-18
+**Duration:** ~10 min
+
+### Accomplishments
+
+1. **Q8_0 Kernel** - Implemented 8-bit dequantization kernel with per-block scale
+2. **Q4_K Kernel** - Implemented super-block structure with 8 sub-blocks, half-precision scales
+3. **Q6_K Kernel** - Implemented 6-bit packed dequantization with signed conversion
+4. **Build System** - Added all three kernels to build.rs for compilation
+
+### Commits
+
+- `ec5723f`: feat(05-03): add Q8_0 dequantization HIP kernel
+- `094b210`: feat(05-03): add Q4_K dequantization HIP kernel
+- `d248b0e`: feat(05-03): add Q6_K dequantization HIP kernel
+- `e8f430c`: feat(05-03): add Q8_0, Q4_K, Q6_K dequant kernels to build system
+- `42ca464`: docs(05-03): add plan summary
+
+### Decisions Made
+
+- **Skip Q4_0 kernel:** Plan 05-02 was not executed, but Q8_0/Q4_K/Q6_K are independent
+- **Inline FP16 conversion:** Added f16_to_f32() device function to avoid __half float dependency
+- **Batch kernel pattern:** All kernels provide both basic and batch variants for flexibility
+- **No Rust wrappers:** Per plan specification, focusing on kernel implementation only
+
+### Files Created/Modified
+
+- `kernels/q8_0_dequant.hip` - Q8_0 format dequantization (114 lines)
+- `kernels/q4_k_dequant.hip` - Q4_K format dequantization (194 lines)
+- `kernels/q6_k_dequant.hip` - Q6_K format dequantization (199 lines)
+- `build.rs` - Added 3 kernel entries
+
+### Key Insights
+
+- Q8_0 is straightforward: scale + 32 int8 values per block
+- Q4_K uses super-block structure with sub-blocks (similar to MXFP block layout)
+- Q6_K 6-bit unpacking similar to MXFP6 (cross-byte bit extraction)
+- All kernels follow mxfp_dequant.hip pattern for RDNA3 optimization
+
+### Known Issues
+
+- No Rust wrappers implemented yet (per plan specification)
+- No runtime tests (requires GPU hardware and wrappers)
+- Q4_0 kernel not implemented (05-02 was skipped)
 
 ---
 
