@@ -309,4 +309,53 @@ mod tests {
         meta2.update_from_kv("yi.attention.head_count", "32");
         assert_eq!(meta2.num_heads, 32);
     }
+
+    #[test]
+    fn test_mixtral_metadata_parsing() {
+        let mut meta = GgufMetadata::default();
+
+        // Test all Mixtral key variants
+        meta.update_from_kv("mixtral.n_layers", "32");
+        assert_eq!(meta.num_layers, 32);
+
+        meta.update_from_kv("mixtral.n_heads", "32");
+        assert_eq!(meta.num_heads, 32);
+
+        meta.update_from_kv("mixtral.n_heads_kv", "8");
+        assert_eq!(meta.num_kv_heads, Some(8));
+
+        meta.update_from_kv("mixtral.hidden_size", "4096");
+        assert_eq!(meta.hidden_size, 4096);
+
+        meta.update_from_kv("mixtral.ffn_dim", "14336");
+        assert_eq!(meta.intermediate_size, 14336);
+
+        meta.update_from_kv("mixtral.head_dim", "128");
+        assert_eq!(meta.head_dim, 128);
+
+        meta.update_from_kv("mixtral.max_position_embeddings", "32768");
+        assert_eq!(meta.max_position_embeddings, 32768);
+
+        meta.update_from_kv("mixtral.vocab_size", "32000");
+        assert_eq!(meta.vocab_size, 32000);
+
+        meta.update_from_kv("mixtral.norm_eps", "0.00001");
+        assert_eq!(meta.rms_norm_eps, 0.00001);
+
+        // Test alternative key names
+        let mut meta2 = GgufMetadata::default();
+        meta2.update_from_kv("mixtral.block_count", "24");
+        assert_eq!(meta2.num_layers, 24);
+
+        meta2.update_from_kv("mixtral.n_embd", "2048");
+        assert_eq!(meta2.hidden_size, 2048);
+
+        meta2.update_from_kv("mixtral.attention.head_count", "20");
+        assert_eq!(meta2.num_heads, 20);
+
+        // MoE-specific keys (parsed but not stored in current metadata struct)
+        // These should not cause errors
+        meta2.update_from_kv("mixtral.n_experts", "8");
+        meta2.update_from_kv("mixtral.n_experts_per_tok", "2");
+    }
 }
