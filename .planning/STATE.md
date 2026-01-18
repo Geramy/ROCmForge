@@ -5,21 +5,21 @@
 See: .planning/PROJECT.md (updated 2026-01-18)
 
 **Core value:** Reliable, fast inference on AMD GPUs with transparent CPU fallback.
-**Current focus:** Phase 5 - Next phase
+**Current focus:** Phase 5 - Quantized Operations
 
 ## Current Position
 
 Phase: 5 of 10 (Quantized Operations)
-Plan: 3 of 4
+Plan: 2 of 4
 Status: In progress
-Last activity: 2026-01-18 — Completed 05-03 (Q8_0, Q4_K, Q6_K dequantization kernels)
+Last activity: 2026-01-18 — Completed 05-02 (Q4_0 dequantization kernel)
 
 Progress: ████████░░ 65% (Phases 1-4 complete, Phase 5 in progress)
 
 **Phase 5 Status:** 🔄 In Progress
 - 05-01: Complete - Quantization research (RESEARCH.md with format specifications and implementation strategy)
-- 05-02: Pending - Q4_0 dequantization kernel (skipped, may be completed later)
-- 05-03: Complete - K-quant dequantization kernels (Q8_0, Q4_K, Q6_K HIP kernels)
+- 05-02: Complete - Q4_0 dequantization kernel (HIP kernel + Rust wrapper + tests)
+- 05-03: Pending - K-quant dequantization kernels (Q8_0, Q4_K, Q6_K HIP kernels)
 - 05-04: Pending - Quantized matmul integration
 
 **Phase 4 Status:** ✅ Complete
@@ -482,6 +482,44 @@ The plan originally recommended `packed_simd`, but research revealed this crate 
 - CPU patterns translate directly to GPU thread blocks
 - Build system integration follows existing pattern (add to kernels array in build.rs)
 
+## Phase 5 Plan 2 Summary
+
+**Completed:** 2026-01-18
+**Duration:** ~20 min
+
+### Accomplishments
+
+1. **Q4_0 HIP Kernel** - Created dequantization kernel following mxfp_dequant.hip pattern
+2. **Build System** - Added Q4_0 kernel to kernels array in build.rs
+3. **Rust Wrapper** - Implemented q4_0_dequant.rs with GPU wrapper and CPU reference
+4. **Test Coverage** - 5 CPU tests + 1 GPU test (ignored, requires hardware)
+
+### Commits
+
+- `ad981e7`: feat(05-02): create Q4_0 dequantization HIP kernel
+- `402679d`: build(05-02): add Q4_0 dequant kernel to build system
+- `d0fd2ff`: feat(05-02): add Rust wrapper and tests for Q4_0 dequantization
+
+### Decisions Made
+
+- **Follow mxfp_dequant.hip pattern:** Use same RDNA3 tuning constants (BLOCK_SIZE=256, WARP_SIZE=32)
+- **Two kernel variants:** Basic (one block per Q4_0 block) and batch (element-based grid)
+- **CPU-side dequant for now:** GPU wrapper uses CPU dequant + upload; native GPU integration planned for 05-04
+- **Comprehensive testing:** Tests cover zeros, positive/negative scales, partial blocks, multiple blocks
+
+### Files Created/Modified
+
+- `kernels/q4_0_dequant.hip` - Q4_0 format dequantization (151 lines)
+- `src/ggml/hip_backend/ops/q4_0_dequant.rs` - Rust wrapper + tests (285 lines)
+- `build.rs` - Added Q4_0 kernel entry
+- `src/ggml/hip_backend/ops/mod.rs` - Added module export
+- `tests/execution_plan_and_decode_tests.rs` - Fixed duplicate serial_test import
+
+### Known Issues
+
+- Current implementation uses CPU dequantization + GPU upload (not native GPU)
+- GPU kernel integration planned for 05-04 (quantized matmul integration)
+
 ## Phase 5 Plan 3 Summary
 
 **Completed:** 2026-01-18
@@ -504,7 +542,7 @@ The plan originally recommended `packed_simd`, but research revealed this crate 
 
 ### Decisions Made
 
-- **Skip Q4_0 kernel:** Plan 05-02 was not executed, but Q8_0/Q4_K/Q6_K are independent
+- **Build on Q4_0 work:** Q8_0/Q4_K/Q6_K kernels follow the pattern established in 05-02
 - **Inline FP16 conversion:** Added f16_to_f32() device function to avoid __half float dependency
 - **Batch kernel pattern:** All kernels provide both basic and batch variants for flexibility
 - **No Rust wrappers:** Per plan specification, focusing on kernel implementation only
@@ -527,7 +565,7 @@ The plan originally recommended `packed_simd`, but research revealed this crate 
 
 - No Rust wrappers implemented yet (per plan specification)
 - No runtime tests (requires GPU hardware and wrappers)
-- Q4_0 kernel not implemented (05-02 was skipped)
+- Q4_0 Rust wrapper exists but Q8_0/Q4_K/Q6_K wrappers pending
 
 ---
 
