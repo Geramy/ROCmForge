@@ -25,7 +25,7 @@
 //! ```
 
 #[cfg(feature = "rocm")]
-use crate::backend::HipStream;
+use crate::backend::{HipError, HipResult, HipStream, HipEvent};
 use std::time::Instant;
 
 /// Timer for measuring kernel execution time
