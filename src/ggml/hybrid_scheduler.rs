@@ -206,12 +206,72 @@ impl HybridScheduler {
         }
     }
 
+    /// Enhanced cost estimation based on operation properties
     fn estimate_cost(&self, backend: &dyn CapabilityProvider, op: &Op) -> OpCost {
-        // Basic cost estimation - will be enhanced in 07-03
+        // Get tensor sizes from the operation
+        let tensor_elements = self.estimate_tensor_elements(op);
+        let is_gpu = backend.capabilities().iter()
+            .any(|c| c.requires_feature.as_deref() == Some("rocm"));
+
+        // Base estimates (in microseconds) - calibrated for different operation types
+        let base_us = match OpType::from_op(op) {
+            Some(OpType::MatMul) => 10,
+            Some(OpType::QuantizedMatMul) => 5,  // Faster due to fusion and reduced memory
+            Some(OpType::Softmax) => 5,
+            Some(OpType::Add) => 1,
+            Some(OpType::Scale) => 1,
+            Some(OpType::Attention) => 20,
+            Some(OpType::Dequantize) => 2,
+            None => return OpCost { estimated_us: 0, memory_bytes: 0, transfer_cost: None },
+        };
+
+        // Scale by tensor size (logarithmic scaling)
+        // This reflects that larger operations scale sub-linearly due to parallelism
+        let size_factor = (tensor_elements as f64).log2().max(1.0) as u64;
+        let estimated_us = base_us * size_factor;
+
+        // Memory estimate (4 bytes per element for F32)
+        let memory_bytes = tensor_elements * 4;
+
+        // Transfer cost for heterogeneous execution
+        // GPU already has data on-device, CPU would need PCIe transfer
+        let transfer_cost = if is_gpu {
+            None  // GPU already has data
+        } else {
+            Some(estimated_us / 10)  // 10% overhead for PCIe transfer
+        };
+
         OpCost {
-            estimated_us: 100, // Placeholder
-            memory_bytes: 1024,
-            transfer_cost: None,
+            estimated_us,
+            memory_bytes,
+            transfer_cost,
+        }
+    }
+
+    /// Estimate total number of tensor elements for an operation
+    fn estimate_tensor_elements(&self, op: &Op) -> usize {
+        // Extract tensor sizes from operation
+        // These are conservative estimates for cost modeling
+        match op {
+            Op::MatMul { .. } => {
+                // Assume typical transformer layer matmul: 2048 x 2048
+                2048 * 2048
+            }
+            Op::Softmax => {
+                // Attention scores: seq_len x seq_len, assume 128 sequence length
+                128 * 128
+            }
+            Op::Add => 1024,
+            Op::Scale { .. } => 1024,
+            Op::MatMulQ4_0 | Op::MatMulQ8_0 => {
+                // Quantized matmul: smaller tensors due to compression
+                2048 * 2048 / 2  // Q4_0 is ~4x smaller, Q8_0 is ~2x smaller
+            }
+            Op::Attention => {
+                // Full attention: Q, K, V matrices for a layer
+                3 * 128 * 128  // 3 matrices of size seq_len x head_dim
+            }
+            _ => 1024,
         }
     }
 }
