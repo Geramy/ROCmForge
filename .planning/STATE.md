@@ -5,16 +5,16 @@
 See: .planning/PROJECT.md (updated 2026-01-18)
 
 **Core value:** Reliable, fast inference on AMD GPUs with transparent CPU fallback.
-**Current focus:** Phase 4 — CPU SIMD Backend
+**Current focus:** Phase 5 - Next phase
 
 ## Current Position
 
-Phase: 4 of 10 (CPU SIMD Backend)
-Plan: 3 of 4
-Status: In progress
-Last activity: 2026-01-18 — Completed 04-03-PLAN.md (SIMD Attention Operations)
+Phase: 5 of 10 (Ready for next phase)
+Plan: 4 of 4
+Status: Complete
+Last activity: 2026-01-18 — Completed 04-04-PLAN.md (Backend Integration)
 
-Progress: ████████░░ 57% (Phases 1-3 complete, Phase 4: 3/4 plans)
+Progress: ████████░░ 62% (Phases 1-4 complete, Phase 5 ready)
 
 **Phase 3 Status:** ✅ Complete
 - 03-01: Complete - Created execution_plan/ directory with architecture.rs, layer_plan.rs, ggml_plan.rs
@@ -22,18 +22,18 @@ Progress: ████████░░ 57% (Phases 1-3 complete, Phase 4: 3/4 
 - 03-03: Complete - Split gguf.rs into 5 modules (mxfp.rs, tensor_type.rs, metadata.rs, gguf_tensor.rs, dequant.rs)
 - 03-04: Complete - Consolidated test fixtures (tests/common/fixtures.rs, tempfile_helpers.rs)
 
-**Phase 4 Status:** 🔄 In Progress (3/4 plans)
+**Phase 4 Status:** ✅ Complete
 - 04-01: Complete - SIMD strategy selection (std::simd, MSRV 1.82+, 4-8x expected speedup)
 - 04-02: Complete - CPU SIMD primitives (matmul, tiled algorithm, 7/7 tests passing)
 - 04-03: Complete - SIMD attention operations (softmax, QK^T, weighted value, 10/10 tests passing)
-- 04-04: Pending - Backend integration (CpuBackend trait, SIMD backend)
+- 04-04: Complete - Backend integration (CpuBackend with SIMD/scalar selection, 10/10 tests passing)
 
 ## Performance Metrics
 
 **Velocity:**
-- Total plans completed: 15
-- Average duration: ~1.92 hours/plan (including testing)
-- Total execution time: ~28.8 hours
+- Total plans completed: 16
+- Average duration: ~1.82 hours/plan (including testing)
+- Total execution time: ~29.1 hours
 
 **By Phase:**
 
@@ -42,10 +42,10 @@ Progress: ████████░░ 57% (Phases 1-3 complete, Phase 4: 3/4 
 | 1 (Critical Bug Fixes) | 3 | ~9 hours | ~3 hours |
 | 2 (Test Infrastructure) | 4 | ~13 hours | ~3.25 hours |
 | 3 (Codebase Modularization) | 4 | ~5 hours | ~1.25 hours |
-| 4 (CPU SIMD Backend) | 3 | ~1 hour | ~0.33 hours |
+| 4 (CPU SIMD Backend) | 4 | ~1.2 hours | ~0.3 hours |
 
 **Recent Trend:**
-- Last 7 plans: 02-04, 03-01, 03-02, 03-03, 03-04, 04-01, 04-02, 04-03
+- Last 8 plans: 02-04, 03-01, 03-02, 03-03, 03-04, 04-01, 04-02, 04-03, 04-04
 - Trend: Fast execution on SIMD implementation plans
 
 *Updated after each plan completion*
@@ -399,6 +399,45 @@ The plan originally recommended `packed_simd`, but research revealed this crate 
 - Polynomial exp approximation has limited accuracy for values far from zero
 - SIMD feature requires nightly Rust due to portable_simd feature gate
 - Tests validate distribution properties rather than exact value matching
+
+## Phase 4 Plan 4 Summary
+
+**Completed:** 2026-01-18
+**Duration:** 30 min
+
+### Accomplishments
+
+1. **CPU Backend Enhancement** - Enhanced CpuBackend in src/ggml/cpu_backend.rs with SIMD support
+2. **Compile-time Feature Detection** - Implemented detect_simd_capabilities() using cfg(target_arch)
+3. **Runtime SIMD/Scalar Selection** - Added simd_capable flag for runtime path selection
+4. **10/10 Tests Passing** - All CPU backend operations tested (MatMul, Softmax, Add, Scale, Copy)
+
+### Commits
+
+- `275cda7`: feat(04-04): implement CPU backend with SIMD/scalar selection
+
+### Decisions Made
+
+- **Compile-time detection:** Used cfg(target_arch) instead of runtime CPUID for SIMD detection. Simpler, no additional dependencies.
+- **Borrow checker workaround:** Cloned input buffers before mutable borrow to avoid E0502/E0499 errors. Acceptable for CPU backend (small tensors).
+- **Inline scalar fallback:** Inlined scalar implementations to avoid method borrow conflicts. Cleaner than trying to work around Rust's borrow checker.
+- **Error type consistency:** Used existing GgmlError variants (InvalidShape, Backend, Unimplemented) instead of adding new types.
+
+### Files Created/Modified
+
+- `src/ggml/cpu_backend.rs` - Enhanced with SIMD support (533 LOC total)
+  - `detect_simd_capabilities()` - Compile-time SIMD detection
+  - `is_simd_capable()` - Public query method
+  - `matmul()` - MatMul with SIMD/scalar path selection
+  - `softmax()` - Softmax with SIMD/scalar path selection
+  - `add()`, `scale()`, `copy()` - Additional operations
+- `.planning/phases/04-cpu-simd-backend/04-04-SUMMARY.md` - Plan summary
+
+### Known Issues
+
+- SIMD requires nightly Rust due to portable_simd feature gate
+- No runtime CPU feature detection (assumes AVX2 on x86_64)
+- Input buffer cloning may have performance impact for large tensors
 
 ---
 
