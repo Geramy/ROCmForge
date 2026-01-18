@@ -5,22 +5,28 @@
 See: .planning/PROJECT.md (updated 2026-01-18)
 
 **Core value:** Reliable, fast inference on AMD GPUs with transparent CPU fallback.
-**Current focus:** Phase 6 - Attention Optimization
+**Current focus:** Phase 7 - Hybrid Execution
 
 ## Current Position
 
-Phase: 6 of 10 (Attention Optimization)
-Plan: 4 of 4
-Status: 06-04 complete, Phase 6 complete
-Last activity: 2026-01-18 — Completed 06-04 (Benchmark and optimize attention)
+Phase: 7 of 10 (Hybrid Execution)
+Plan: 1 of 4
+Status: 07-01 complete, Plan 1 complete
+Last activity: 2026-01-18 — Completed 07-01 (Hybrid scheduler architecture)
 
-Progress: ██████████ 80.0% (Phases 1-6 complete)
+Progress: ██████████ 82.0% (Phases 1-6 complete, Phase 7 plan 1/4 complete)
 
 **Phase 6 Status:** ✅ Complete
 - 06-01: Complete - Flash attention research (RESEARCH.md with kernel documentation and integration strategy)
 - 06-02: Complete - Flash attention backend registration (FlashAttentionBackend with BackendImplementation trait)
 - 06-03: Complete - Flash attention kernel integration (GPU kernel calls with buffer management)
 - 06-04: Complete - Benchmark and optimize attention (Benchmark suite with CPU baselines)
+
+**Phase 7 Status:** 🔄 In Progress (1/4 plans complete)
+- 07-01: Complete - Hybrid scheduler architecture (CapabilityProvider trait, HybridScheduler with 4 strategies, telemetry system)
+- 07-02: Pending - Backend capability implementation
+- 07-03: Pending - Cost modeling for backend selection
+- 07-04: Pending - Integration and testing
 
 **Phase 5 Status:** ✅ Complete
 - 05-01: Complete - Quantization research (RESEARCH.md with format specifications and implementation strategy)
@@ -43,9 +49,9 @@ Progress: ██████████ 80.0% (Phases 1-6 complete)
 ## Performance Metrics
 
 **Velocity:**
-- Total plans completed: 19
-- Average duration: ~1.59 hours/plan (including testing)
-- Total execution time: ~30.2 hours
+- Total plans completed: 20
+- Average duration: ~1.52 hours/plan (including testing)
+- Total execution time: ~30.4 hours
 
 **By Phase:**
 
@@ -56,11 +62,12 @@ Progress: ██████████ 80.0% (Phases 1-6 complete)
 | 3 (Codebase Modularization) | 4 | ~5 hours | ~1.25 hours |
 | 4 (CPU SIMD Backend) | 4 | ~1.2 hours | ~0.3 hours |
 | 5 (Quantized Operations) | 4 | ~0.4 hours | ~6 min |
-| 6 (Attention Optimization) | 1 | ~0.5 hours | ~30 min (research) |
+| 6 (Attention Optimization) | 4 | ~2 hours | ~30 min |
+| 7 (Hybrid Execution) | 1 | ~0.25 hours | ~15 min |
 
 **Recent Trend:**
-- Last 10 plans: 03-04, 04-01, 04-02, 04-03, 04-04, 05-01, 05-02, 05-03, 05-04, 06-01
-- Trend: Fast execution, research completed in ~30 min
+- Last 10 plans: 04-01, 04-02, 04-03, 04-04, 05-01, 05-02, 05-03, 05-04, 06-01 to 06-04, 07-01
+- Trend: Fast execution, architecture complete in ~15 min
 
 *Updated after each plan completion*
 
@@ -88,6 +95,11 @@ Recent decisions affecting current work:
   - Impact: 4-8x speedup for CPU operations, MSRV increased to Rust 1.82+
   - Implementation: Compile-time cfg(target_arch) for x86_64 (f32x8 AVX2) and aarch64 (f32x4 NEON)
 
+- **Use CapabilityProvider trait decoupled from GgmlBackend** (Plan 07-01)
+  - Rationale: GgmlBackend has associated `Buffer` type, prevents `Arc<dyn CapableBackend>` storage
+  - Impact: HybridScheduler can store backends as `Arc<dyn CapabilityProvider>` for dynamic dispatch
+  - Implementation: Separate trait with `capabilities()`, `can_execute()`, `op_capability()`, `backend_id()` methods
+
 ### Deferred Issues
 
 None yet.
@@ -103,8 +115,43 @@ None yet.
 ## Session Continuity
 
 Last session: 2026-01-18
-Stopped at: Completed 05-03 (Q8_0, Q4_K, Q6_K dequantization kernels)
+Stopped at: Completed 07-01 (Hybrid scheduler architecture)
 Resume file: None
+
+## Phase 7 Plan 1 Summary
+
+**Completed:** 2026-01-18
+**Duration:** 15 min
+
+### Accomplishments
+
+1. **CapabilityProvider Trait** - Decoupled capability query from GgmlBackend for dynamic dispatch
+2. **HybridScheduler Architecture** - Complete scheduler with 4 execution strategies
+3. **Telemetry System** - ExecutionEvent and BackendStats for tracking decisions
+4. **8/8 Tests Passing** - Comprehensive test coverage for scheduler functionality
+
+### Commits
+
+- `b5ac1b4`: feat(07-01): create operation capability tracking trait
+- `22f8c78`: feat(07-01): create HybridScheduler with execution strategies
+- `bd8cf7b`: feat(07-01): export hybrid_scheduler module with public API
+
+### Decisions Made
+
+- **Use CapabilityProvider instead of CapableBackend: GgmlBackend** - GgmlBackend has associated Buffer type preventing Arc<dyn Trait> storage
+- **Vec instead of HashSet for capabilities** - OpCapability contains Vec<DType> which doesn't implement Hash
+- **Placeholder cost estimation** - Real cost modeling deferred to plan 07-03
+
+### Files Created/Modified
+
+- `src/ggml/hybrid_scheduler.rs` - 437 LOC, complete scheduler implementation
+- `src/ggml/mod.rs` - Added module exports
+
+### Known Issues
+
+- No actual backend integration (CpuBackend/HipGgmlBackend don't implement CapabilityProvider yet)
+- Placeholder cost estimation (100us, 1024 bytes)
+- GPU name hardcoded as "gpu"
 
 ## Phase 2 Plan 2 Summary
 
