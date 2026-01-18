@@ -462,6 +462,86 @@ pub fn dequant_q4_k(tensor: &GgufTensor) -> Result<Vec<f32>> {
     Ok(result)
 }
 
+/// Dequantize Q5_K tensor to FP32
+/// Q5_K uses super-block structure with 256-byte blocks
+/// Format: 16 half-precision scales + 16 int8 mins + 160 bytes 5-bit quants + 48 bytes additional
+pub fn dequant_q5_k(tensor: &GgufTensor) -> Result<Vec<f32>> {
+    let total_elements = tensor.total_elements();
+    let mut result = vec![0.0f32; total_elements];
+    let blocks = total_elements.div_ceil(256);
+
+    for block_idx in 0..blocks {
+        let block_start = block_idx * 256;
+
+        if block_start + 256 > tensor.data.len() {
+            break;
+        }
+
+        // Q5_K super-block structure:
+        // - 32 bytes: 16 half-precision scales (2 bytes each) for 16 sub-blocks
+        // - 16 bytes: 16 int8 mins (1 byte each) for 16 sub-blocks
+        // - 160 bytes: 16 sub-blocks of 5-bit quantized values (10 bytes each)
+        // - 48 bytes: additional data
+
+        let scales_start = block_start;
+        let mins_start = block_start + 32;
+        let quants_start = block_start + 48;
+
+        // Process each of the 16 sub-blocks (16 elements each)
+        for sub_block_idx in 0..16 {
+            let sub_block_start = block_idx * 256 + sub_block_idx * 16;
+
+            // Get scale for this sub-block
+            let scale_offset = scales_start + sub_block_idx * 2;
+            let scale = if scale_offset + 2 <= tensor.data.len() {
+                let scale_bits = u16::from_le_bytes([
+                    tensor.data[scale_offset],
+                    tensor.data[scale_offset + 1],
+                ]);
+                half::f16::from_bits(scale_bits).to_f32()
+            } else {
+                1.0
+            };
+
+            // Get min for this sub-block
+            let min_offset = mins_start + sub_block_idx;
+            let min = if min_offset < tensor.data.len() {
+                tensor.data[min_offset] as i8 as f32
+            } else {
+                0.0
+            };
+
+            // Extract 5-bit quantized values for this sub-block (16 values)
+            for i in 0..16 {
+                let element_idx = sub_block_start + i;
+                if element_idx >= total_elements {
+                    break;
+                }
+
+                // 5-bit values packed: 16 values * 5 bits = 80 bits = 10 bytes
+                let bit_pos = i * 5;
+                let byte_idx = bit_pos / 8;
+                let bit_offset = bit_pos % 8;
+
+                let quant_offset = quants_start + sub_block_idx * 10 + byte_idx;
+
+                let quant = if quant_offset + 2 <= tensor.data.len() {
+                    // Read 16 bits to ensure we can extract 5 bits that may span 2 bytes
+                    let combined = ((tensor.data[quant_offset + 1] as u16) << 8)
+                                   | (tensor.data[quant_offset] as u16);
+                    ((combined >> bit_offset) & 0x1F) as u8
+                } else {
+                    0
+                };
+
+                result[element_idx] = min + (quant as f32) * scale;
+            }
+        }
+    }
+
+    Ok(result)
+}
+
 /// Dequantize Q6_K tensor to FP32
 /// Q6_K uses 256-byte blocks encoding 256 elements
 /// Format: scales (16 bytes) + quantized values (240 bytes for 256*6/8 = 192 bytes + padding)
@@ -531,6 +611,128 @@ pub fn dequant_q6_k(tensor: &GgufTensor) -> Result<Vec<f32>> {
     Ok(result)
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::loader::gguf_tensor::GgufTensor;
+    use crate::loader::tensor_type::GgufTensorType;
+    use crate::loader::TensorShape;
+
+    fn create_test_tensor(tensor_type: GgufTensorType, data: Vec<u8>, shape: Vec<usize>) -> GgufTensor {
+        GgufTensor {
+            name: "test".to_string(),
+            tensor_type,
+            shape: TensorShape::from_dims(&shape),
+            quant_type: tensor_type.to_string().to_string(),
+            data,
+            offset: 0,
+        }
+    }
+
+    #[test]
+    fn test_dequant_q5_k_zeros() {
+        // Test Q5_K with all zeros
+        let mut data = vec![0u8; 256];
+
+        // Set a single scale (half precision 1.0)
+        data[0] = 0x00;
+        data[1] = 0x3C; // 1.0 in half precision
+
+        let tensor = create_test_tensor(GgufTensorType::Q5_K, data, vec![256]);
+        let result = dequant_q5_k(&tensor).unwrap();
+
+        assert_eq!(result.len(), 256);
+        // All values should be 0 (min + quant * scale where quant = 0)
+        for (i, val) in result.iter().enumerate() {
+            assert!(
+                val.abs() < 1e-6,
+                "Zero test mismatch at {}: expected ~0, got {}",
+                i, val
+            );
+        }
+    }
+
+    #[test]
+    fn test_dequant_q5_k_positive() {
+        // Test Q5_K with known positive values
+        let mut data = vec![0u8; 256];
+
+        // Set scale = 1.0 in half precision (0x3C00)
+        data[0] = 0x00;
+        data[1] = 0x3C;
+
+        // Set min = 0 (already 0 from initialization)
+
+        // Set quantized values to known pattern
+        // Q5_K: 16 sub-blocks, 16 elements each, 5 bits per element
+        // First sub-block (elements 0-15): set quants to 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16
+        // Packed: 1<<0 | 2<<5 | 3<<10 | 4<<15 | 5<<20 | 6<<25 | 7<<30 | ...
+        // This is complex, so let's use a simpler pattern
+
+        // Set first quant to 1 (bit 0-4), second quant to 0
+        data[48] = 0x01; // First 5 bits = 1
+
+        let tensor = create_test_tensor(GgufTensorType::Q5_K, data, vec![256]);
+        let result = dequant_q5_k(&tensor).unwrap();
+
+        assert_eq!(result.len(), 256);
+        // First element should be ~1 (min=0, quant=1, scale=1.0)
+        assert!((result[0] - 1.0).abs() < 0.1, "First element: {}", result[0]);
+        // Rest should be ~0
+        for i in 1..16 {
+            assert!(result[i].abs() < 0.1, "Element at {}: {}", i, result[i]);
+        }
+    }
+
+    #[test]
+    fn test_dequant_q5_k_partial_block() {
+        // Test Q5_K with partial block
+        let mut data = vec![0u8; 256];
+
+        // Set scale = 1.0
+        data[0] = 0x00;
+        data[1] = 0x3C;
+
+        let tensor = create_test_tensor(GgufTensorType::Q5_K, data, vec![100]);
+        let result = dequant_q5_k(&tensor).unwrap();
+
+        assert_eq!(result.len(), 100);
+        // All should be ~0 with zeros data
+        for val in &result[..100] {
+            assert!(val.abs() < 1e-6);
+        }
+    }
+
+    #[test]
+    fn test_dequant_q5_k_multiple_blocks() {
+        // Test Q5_K with multiple blocks
+        let mut data = vec![0u8; 512]; // 2 blocks
+
+        // Block 1: scale = 1.0, all zeros
+        data[0] = 0x00;
+        data[1] = 0x3C;
+
+        // Block 2: scale = 2.0 (half precision)
+        data[256] = 0x00;
+        data[257] = 0x40;
+
+        // Set some non-zero quants in second block (first quant = 31)
+        data[256 + 48] = 0xFF; // Lower 5 bits set = 31
+        data[256 + 48 + 1] = 0x80; // Next 5 bits start here
+
+        let tensor = create_test_tensor(GgufTensorType::Q5_K, data, vec![512]);
+        let result = dequant_q5_k(&tensor).unwrap();
+
+        assert_eq!(result.len(), 512);
+        // First block should be ~0
+        for i in 0..256 {
+            assert!(result[i].abs() < 1e-5, "Block 1 at {}: {}", i, result[i]);
+        }
+        // Second block first element should be ~31 * 2.0
+        assert!((result[256] - 62.0).abs() < 1.0, "Block 2 first: {}", result[256]);
+    }
+}
+
 /// Generic dequantization dispatcher
 ///
 /// Routes to the appropriate dequantization function based on tensor type
@@ -557,8 +759,9 @@ pub fn dequantize(tensor: &GgufTensor) -> Result<Vec<f32>> {
         GgufTensorType::Mxfp4 => dequant_mxfp4(tensor),
         GgufTensorType::Mxfp6E2m3 | GgufTensorType::Mxfp6E3m2 => dequant_mxfp6(tensor),
         GgufTensorType::Q4_K => dequant_q4_k(tensor),
+        GgufTensorType::Q5_K => dequant_q5_k(tensor),
         GgufTensorType::Q6_K => dequant_q6_k(tensor),
-        GgufTensorType::Q2_K | GgufTensorType::Q3_K | GgufTensorType::Q5_K => {
+        GgufTensorType::Q2_K | GgufTensorType::Q3_K => {
             Err(anyhow::anyhow!(
                 "K-quant type {:?} not yet implemented for tensor '{}'",
                 tensor.tensor_type,
