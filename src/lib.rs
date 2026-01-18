@@ -25,6 +25,7 @@ pub mod backend;
 pub mod engine;
 pub mod error;
 pub mod http;
+pub mod logging;
 pub mod ggml;
 pub mod kv_cache;
 pub mod loader;
@@ -49,6 +50,10 @@ pub use backend::HipBackend;
 pub use engine::InferenceEngine;
 pub use error::{ErrorCategory, ForgeResult, RocmForgeError};
 pub use kv_cache::KvCache;
+pub use logging::{
+    init_logging_default, init_logging_from_env, init_tracing, is_initialized,
+    LogLevel, LogFormat, LoggingConfig, LoggingError,
+};
 pub use profiling::{KernelTimer, ScopedTimer};
 pub use sampler::Sampler;
 pub use scheduler::Scheduler;
