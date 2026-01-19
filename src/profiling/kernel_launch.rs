@@ -463,6 +463,7 @@ impl LaunchOverheadTracker {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::time::Duration;
 
     #[test]
     fn test_launch_overhead_tracker_creation() {
