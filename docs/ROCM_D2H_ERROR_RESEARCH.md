@@ -299,27 +299,40 @@ for (name, tensor) in &self.tensors {
 }
 ```
 
-### Results
+### Results (Design Proposal - NOT IMPLEMENTED)
 
-| Metric | Before | After |
-|--------|--------|-------|
-| hipMalloc calls | ~1000 | ~300 (70% reduction) |
-| Memory pools | 0 | 3 × 1 GB |
-| Tensors pooled | 0 | ~200 |
-| Model loading | Hang at 180s | ✅ Success |
-| D2H errors | Yes (from pools) | None (pooled tensors never read back) |
+| Metric | Documented (Design) | Actual Implementation |
+|--------|---------------------|----------------------|
+| hipMalloc calls | ~300 (70% reduction) | One per tensor (~300-1000) |
+| Memory pools | 3 × 1 GB | 0 |
+| Tensors pooled | ~200 | 0 |
+| Model loading | Success | Success |
+| D2H errors | None (selective pooling) | None (direct alloc is safe) |
+
+**Note**: The results above reflect the DESIGN PROPOSAL. Actual implementation uses
+direct allocation for all tensors, which also avoids D2H errors because no sub-buffers exist.
 
 ---
 
 ## Status
 
-**Status**: ✅ COMPLETE - Selective memory pooling implemented and working
+**Status**: DESIGN ONLY - NOT IMPLEMENTED
+
+The selective memory pooling design was proposed but never implemented in the codebase.
+See "Implementation Status Update (2026-01-19)" section at the top of this document for verification.
+
+### Current Actual Implementation
 
 The server successfully:
-- Loads models without MES firmware hang
-- Uses memory pooling for ~200 compatible tensors
-- Skips pooling for ~100 tensors needing read-back
-- Avoids hipMemcpyDtoH errors entirely
+- Loads models without MES firmware hang (achieved via other means)
+- Uses direct allocation for all tensors (each tensor gets its own hipMalloc)
+- Avoids hipMemcpyDtoH errors (no sub-buffers exist to cause the bug)
+
+### Why Design Was Not Implemented
+
+The selective pooling design was a proposed solution to the D2H bug, but the codebase
+never implemented it. The current approach (direct allocation for all tensors) achieves
+the same goal (avoiding D2H errors) through simpler means: not creating sub-buffers at all.
 
 ---
 
@@ -357,4 +370,10 @@ The server successfully:
 
 ---
 
-**Status**: ✅ COMPLETE - Issue resolved with selective memory pooling approach
+**Status**: DESIGN ONLY - NOT IMPLEMENTED
+
+The selective memory pooling approach documented above was never implemented.
+Actual implementation uses direct allocation for all tensors, which achieves the
+same goal (avoiding D2H errors) through simpler means.
+
+See "Implementation Status Update (2026-01-19)" section at the top of this document.
