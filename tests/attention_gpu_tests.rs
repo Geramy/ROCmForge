@@ -5,13 +5,17 @@
 
 #[cfg(test)]
 mod tests {
+    use rocmforge::backend::gpu_test_common::GPU_FIXTURE;
+    use rocmforge::backend::hip_backend::{DeviceTensor, HipBackend};
+    use rocmforge::loader::mmap_loader::TensorShape;
     use rocmforge::model::config::ModelConfig;
+    use rocmforge::model::kv_cache::KVCache;
+    use rocmforge::ops::attention_gpu::HipAttentionKernels;
     use serial_test::serial;
 
     /// Test basic HIP backend creation for attention kernels
     #[test]
     #[cfg(feature = "rocm")]
-    #[serial]
     fn test_hip_backend_creation() {
         let fixture = GPU_FIXTURE.as_ref()
             .expect("GPU not available - test skipped");

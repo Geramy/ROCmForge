@@ -12,7 +12,6 @@ use rocmforge::model::{
     config::{ModelConfig, ModelType},
     kv_cache::KVCache,
 };
-use std::sync::Arc;
 
 // REMOVED: Duplicate test_execution_plan_construction
 // This test is already in execution_plan_construction_tests.rs:14

@@ -658,6 +658,8 @@ pub struct QueueStats {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::thread;
+    use std::time::Duration;
 
     #[test]
     fn test_request_creation() {

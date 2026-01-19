@@ -3,6 +3,8 @@
 //! This module provides wrappers around tempfile crate with consistent
 //! error handling and context for test files.
 
+#![allow(dead_code)]
+
 use anyhow::Context;
 use std::path::PathBuf;
 
@@ -38,7 +40,5 @@ pub fn temp_path() -> PathBuf {
     std::env::temp_dir().join(format!("rocmforge_test_{}", std::process::id()))
 }
 
-// Re-export commonly used tempfile types for convenience
-// Note: These are exported for external use even if not used directly in this module
-#[allow(dead_code)]
-pub use tempfile::{NamedTempFile, TempDir};
+// Note: NamedTempFile and TempDir are available from tempfile crate
+// but not re-exported here to avoid unused import warnings
