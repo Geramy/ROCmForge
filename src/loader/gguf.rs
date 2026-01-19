@@ -1565,7 +1565,14 @@ impl GgufLoader {
             "qwen2.intermediate_size" => {
                 self.metadata.intermediate_size = value.parse().unwrap_or(0)
             }
-            "qwen2.rope.dimension_count" => self.metadata.head_dim = value.parse().unwrap_or(0),
+            "qwen2.rope.dimension_count" => {
+                // Optional override: only set if value is valid (> 0)
+                if let Ok(dim) = value.parse::<usize>() {
+                    if dim > 0 {
+                        self.metadata.head_dim = dim;
+                    }
+                }
+            }
             "qwen2.max_position_embeddings" => {
                 self.metadata.max_position_embeddings = value.parse().unwrap_or(2048)
             }
@@ -1581,8 +1588,12 @@ impl GgufLoader {
                 self.metadata.intermediate_size = value.parse().unwrap_or(0)
             }
             "llama.rope.dimension_count" => {
-                // Usually head_dim = hidden_size / num_heads, but this gives rope dimensions
-                self.metadata.head_dim = value.parse().unwrap_or(0)
+                // Optional override: usually head_dim = hidden_size / num_heads
+                if let Ok(dim) = value.parse::<usize>() {
+                    if dim > 0 {
+                        self.metadata.head_dim = dim;
+                    }
+                }
             }
             "llama.max_position_embeddings" => {
                 self.metadata.max_position_embeddings = value.parse().unwrap_or(2048)

@@ -82,7 +82,15 @@ impl GgufMetadata {
             "qwen2.attention.head_count" => self.num_heads = value.parse().unwrap_or(0),
             "qwen2.embedding_length" => self.hidden_size = value.parse().unwrap_or(0),
             "qwen2.intermediate_size" => self.intermediate_size = value.parse().unwrap_or(0),
-            "qwen2.rope.dimension_count" => self.head_dim = value.parse().unwrap_or(0),
+            "qwen2.rope.dimension_count" => {
+                // Optional override: only set if value is valid (> 0)
+                // This preserves calculated default from calculate_default_head_dim()
+                if let Ok(dim) = value.parse::<usize>() {
+                    if dim > 0 {
+                        self.head_dim = dim;
+                    }
+                }
+            }
             "qwen2.max_position_embeddings" => {
                 self.max_position_embeddings = value.parse().unwrap_or(2048)
             }
@@ -96,8 +104,13 @@ impl GgufMetadata {
             "llama.embedding_length" => self.hidden_size = value.parse().unwrap_or(0),
             "llama.feed_forward_length" => self.intermediate_size = value.parse().unwrap_or(0),
             "llama.rope.dimension_count" => {
-                // Usually head_dim = hidden_size / num_heads, but this gives rope dimensions
-                self.head_dim = value.parse().unwrap_or(0)
+                // Optional override: usually head_dim = hidden_size / num_heads
+                // GGUF can provide explicit rope dimensions if different
+                if let Ok(dim) = value.parse::<usize>() {
+                    if dim > 0 {
+                        self.head_dim = dim;
+                    }
+                }
             }
             "llama.max_position_embeddings" => {
                 self.max_position_embeddings = value.parse().unwrap_or(2048)
