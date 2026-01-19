@@ -58,18 +58,3 @@ pub struct LayerPlan {
     /// Optional second layer norm bias [hidden_size]
     pub norm2_bias: Option<Arc<LazyTensor>>,
 }
-
-#[allow(dead_code)]
-impl LayerPlan {
-    /// Create a new layer plan
-    ///
-    /// **DEPRECATED**: This method is deprecated due to Phase 2 lazy loading.
-    /// Layer plans are now created via `ExecutionPlan::from_gguf()` which properly
-    /// initializes lazy tensor handles.
-    #[deprecated(note = "Layer plans are created by ExecutionPlan::from_gguf()")]
-    pub fn new() -> Self {
-        // This is a stub - actual creation happens in ExecutionPlan::from_gguf()
-        // This is kept for API compatibility but will always fail
-        panic!("LayerPlan::new() is deprecated. Use ExecutionPlan::from_gguf() instead.")
-    }
-}
