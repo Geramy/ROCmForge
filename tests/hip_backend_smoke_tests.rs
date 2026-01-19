@@ -192,12 +192,12 @@ mod tests {
             let _module = backend.load_module(&_module_path.to_string_lossy())?;
 
             // Test valid kernel name
-            let kernel_result = backend.get_kernel(&module_path.to_string_lossy(), "add_one");
+            let kernel_result = backend.get_kernel(&_module_path.to_string_lossy(), "add_one");
             assert!(kernel_result.is_ok(), "Should find 'add_one' kernel");
 
             // Test invalid kernel name
             let invalid_result =
-                backend.get_kernel(&module_path.to_string_lossy(), "invalid_kernel");
+                backend.get_kernel(&_module_path.to_string_lossy(), "invalid_kernel");
             assert!(invalid_result.is_err(), "Should not find 'invalid_kernel'");
         }
 

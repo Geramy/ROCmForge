@@ -207,7 +207,7 @@ mod tests {
         let execution_plan = ExecutionPlan::from_gguf(&backend, &loader)?;
 
         // Create model runtime
-        let runtime = ModelRuntime::from_execution_plan_with_backend(execution_plan)?;
+        let mut runtime = ModelRuntime::from_execution_plan_with_backend(execution_plan)?;
 
         // Create input tensor (single token)
         let input_shape = rocmforge::loader::TensorShape::from_dims(&[1, 512]); // [seq_len=1, hidden_size]

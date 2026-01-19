@@ -40,7 +40,7 @@ mod tests {
 
         // Create output tensor
         let output_shape = TensorShape::from_dims(&[batch_size, seq_len, hidden_size]);
-        let output_tensor = DeviceTensor::empty(&backend, output_shape).context("TODO: add error context")?;
+        let mut output_tensor = DeviceTensor::empty(&backend, output_shape).context("TODO: add error context")?;
 
         // Initialize with test data
         let total_elements = batch_size * seq_len * hidden_size;
@@ -139,7 +139,7 @@ mod tests {
 
         // Create output tensor
         let output_shape = TensorShape::from_dims(&[seq_len, hidden_size]);
-        let output_tensor = DeviceTensor::empty(&backend, output_shape).context("TODO: add error context")?;
+        let mut output_tensor = DeviceTensor::empty(&backend, output_shape).context("TODO: add error context")?;
 
         // Initialize with test data
         let test_input: Vec<f32> = (0..(seq_len * hidden_size))
@@ -291,11 +291,11 @@ mod tests {
         );
         assert_eq!(
             layer_plan.mlp_gate_proj.shape().context("TODO: add error context")?,
-            &[intermediate_size, hidden_size]
+            &[config.intermediate_size, hidden_size]
         );
         assert_eq!(
             layer_plan.mlp_down_proj.shape().context("TODO: add error context")?,
-            &[hidden_size, intermediate_size]
+            &[hidden_size, config.intermediate_size]
         );
         assert_eq!(layer_plan.norm1_weight.shape().context("TODO: add error context")?, &[hidden_size]);
         assert_eq!(layer_plan.norm2_weight.shape().context("TODO: add error context")?, &[hidden_size]);
