@@ -194,34 +194,6 @@ pub fn matmul_f32(
     Ok(c_row_major)
 }
 
-/// Transpose a matrix in-place on GPU
-/// Converts from column-major to row-major or vice versa
-#[allow(dead_code)]
-fn transpose_in_place_gpu(
-    _handle: &HipBlasHandle,
-    matrix: &HipBuffer,
-    rows: i32,
-    cols: i32,
-) -> MatmulResult<HipBuffer> {
-    let transposed = HipBuffer::new(matrix.size())?;
-
-    // Simple CPU transpose for now (can be optimized with GPU kernel later)
-    let mut host_matrix = vec![0.0f32; matrix.size() / std::mem::size_of::<f32>()];
-    matrix.copy_to_host(&mut host_matrix)?;
-
-    let mut host_transposed = vec![0.0f32; host_matrix.len()];
-
-    for i in 0..rows as usize {
-        for j in 0..cols as usize {
-            host_transposed[i * cols as usize + j] = host_matrix[j * rows as usize + i];
-        }
-    }
-
-    transposed.copy_from_host(&host_transposed)?;
-
-    Ok(transposed)
-}
-
 /// CPU reference matrix multiplication for testing
 /// Simple O(m*n*k) implementation for validation
 pub fn cpu_matmul_f32(a: &[f32], b: &[f32], m: usize, n: usize, k: usize) -> Vec<f32> {
