@@ -12,6 +12,9 @@ use std::time::Duration;
 use tokio::io::{self, AsyncWriteExt};
 use tokio::time::sleep;
 
+#[cfg(feature = "context")]
+use rocmforge::context::{GraphContextStore, ContextSearchParams};
+
 #[derive(Parser, Debug)]
 #[command(name = "rocmforge-cli", version)]
 #[command(about = "Interact with a running ROCmForge inference server", long_about = None)]
@@ -82,6 +85,60 @@ enum Commands {
         /// Directory containing GGUF files (defaults to ROCMFORGE_MODELS or ./models)
         #[arg(long)]
         dir: Option<String>,
+    },
+    /// Context management commands (requires --features context)
+    #[cfg(feature = "context")]
+    Context {
+        #[command(subcommand)]
+        subcommand: ContextSubcommand,
+    },
+}
+
+#[cfg(feature = "context")]
+#[derive(Subcommand, Debug)]
+enum ContextSubcommand {
+    /// Add a message to context store
+    Add {
+        /// Message text to add
+        text: String,
+        /// Context database path (defaults to in-memory)
+        #[arg(long)]
+        db: Option<String>,
+        /// Embedding dimension
+        #[arg(long, default_value = "384")]
+        dimension: usize,
+    },
+    /// Search context by semantic similarity
+    Search {
+        /// Query text
+        query: String,
+        /// Maximum number of results
+        #[arg(long, default_value = "5")]
+        k: usize,
+        /// Context database path
+        #[arg(long)]
+        db: Option<String>,
+        /// Embedding dimension
+        #[arg(long, default_value = "384")]
+        dimension: usize,
+    },
+    /// List all messages in context
+    List {
+        /// Context database path
+        #[arg(long)]
+        db: Option<String>,
+        /// Embedding dimension
+        #[arg(long, default_value = "384")]
+        dimension: usize,
+    },
+    /// Clear all messages from context
+    Clear {
+        /// Context database path
+        #[arg(long)]
+        db: Option<String>,
+        /// Embedding dimension
+        #[arg(long, default_value = "384")]
+        dimension: usize,
     },
 }
 
@@ -193,6 +250,87 @@ async fn main() -> anyhow::Result<()> {
         }
         Commands::Models { dir } => {
             list_models(dir.as_deref()).await?;
+        }
+        #[cfg(feature = "context")]
+        Commands::Context { subcommand } => {
+            handle_context_command(subcommand)?;
+        }
+    }
+    Ok(())
+}
+
+#[cfg(feature = "context")]
+fn handle_context_command(cmd: ContextSubcommand) -> anyhow::Result<()> {
+    match cmd {
+        ContextSubcommand::Add { text, db, dimension } => {
+            let mut store = if let Some(path) = db {
+                GraphContextStore::open(&path, dimension)?
+            } else {
+                GraphContextStore::in_memory(dimension)?
+            };
+
+            let id = store.add_message_continuation(&text)?;
+            println!("Added message with ID: {}", id);
+            println!("Total messages: {}", store.len()?);
+        }
+        ContextSubcommand::Search {
+            query,
+            k,
+            db,
+            dimension,
+        } => {
+            let store = if let Some(path) = db {
+                GraphContextStore::open(&path, dimension)?
+            } else {
+                GraphContextStore::in_memory(dimension)?
+            };
+
+            let params = ContextSearchParams {
+                q: query,
+                k,
+                expand: false,
+            };
+
+            let result = store.search(&params)?;
+
+            println!("Query: {}", result.query);
+            println!("Total messages: {}", result.total_messages);
+            println!("Found {} results:", result.messages.len());
+
+            for (i, msg) in result.messages.iter().enumerate() {
+                println!(
+                    "  {}. [sim={:.4}] \"{}\" (seq={})",
+                    i + 1,
+                    msg.similarity.unwrap_or(0.0),
+                    msg.text,
+                    msg.seq_id
+                );
+            }
+        }
+        ContextSubcommand::List { db, dimension } => {
+            let store = if let Some(path) = db {
+                GraphContextStore::open(&path, dimension)?
+            } else {
+                GraphContextStore::in_memory(dimension)?
+            };
+
+            let messages = store.get_conversation()?;
+
+            println!("Total messages: {}", messages.len());
+            for msg in messages {
+                println!("  [seq={}] {}", msg.seq_id, msg.text);
+            }
+        }
+        ContextSubcommand::Clear { db, dimension } => {
+            let mut store = if let Some(path) = db {
+                GraphContextStore::open(&path, dimension)?
+            } else {
+                GraphContextStore::in_memory(dimension)?
+            };
+
+            let before = store.len()?;
+            store.clear()?;
+            println!("Cleared {} messages from context store", before);
         }
     }
     Ok(())

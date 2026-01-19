@@ -42,6 +42,10 @@ pub mod scheduler;
 pub mod tensor;
 pub mod tokenizer;
 
+// Context engine (feature-gated)
+#[cfg(feature = "context")]
+pub mod context;
+
 #[cfg(test)]
 mod hip_backend_debug_tests;
 #[cfg(test)]

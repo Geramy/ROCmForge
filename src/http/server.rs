@@ -214,6 +214,8 @@ impl GenerationState {
 pub type ServerState = Arc<RwLock<HashMap<u32, GenerationState>>>;
 type EventStreamResult = Pin<Box<dyn Stream<Item = Result<Event, Infallible>> + Send>>;
 
+// InferenceServer - note: context feature requires separate routing
+// due to HNSW index not being Send+Sync
 #[derive(Clone)]
 pub struct InferenceServer {
     state: ServerState,

@@ -12,6 +12,9 @@ license = "MIT"
 # hip = { version = "0.1", features = ["v5"] }
 # hip-sys = "0.1"
 
+# Context engine (feature-gated)
+sqlitegraph = { version = "1.0", optional = true }
+
 # HTTP server
 axum = { version = "0.7", features = ["json"] }
 tokio = { version = "1.0", features = ["full"] }
@@ -121,6 +124,8 @@ rocm = []
 simd = []
 # Enable AVX-512 code paths (opt-in due to CPU throttling concerns)
 avx512 = ["simd"]
+# Enable context engine with SQLiteGraph
+context = ["sqlitegraph"]
 # cuda = ["cudarc"]
 
 [profile.release]
