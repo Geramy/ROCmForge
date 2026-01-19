@@ -7,6 +7,7 @@ use std::fmt;
 /// GGUF tensor types (ggml_type enum values from ggml.h)
 #[derive(Debug, Clone, PartialEq, Copy, Serialize)]
 #[repr(u8)]
+#[allow(non_camel_case_types)]  // Q*_K variants match GGUF specification
 pub enum GgufTensorType {
     F32 = 0,   // GGML_TYPE_F32
     F16 = 1,   // GGML_TYPE_F16
