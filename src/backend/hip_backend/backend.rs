@@ -7,6 +7,10 @@ use std::sync::Arc;
 use thiserror::Error;
 
 // HIP FFI bindings
+// FFI declarations below are bound to ROCm HIP API.
+// All functions are actively used through wrapper methods in HipBackend.
+// The dead_code allowance is needed because FFI symbols appear unused
+// to the compiler (they're only called through unsafe blocks).
 #[link(name = "amdhip64")]
 #[allow(dead_code)]
 extern "C" {
