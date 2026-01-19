@@ -61,6 +61,9 @@ bytemuck = { version = "1.15", features = ["derive"] }
 # Parallel processing (for async GPU loading)
 rayon = "1.10"
 
+# CPU feature detection for runtime SIMD dispatch
+raw-cpuid = "11"
+
 # ONNX Runtime with ROCm support (placeholder for now)
 # ort = { version = "2.0", features = ["rocm"] }
 
@@ -116,6 +119,8 @@ default = []
 rocm = []
 # Enable SIMD CPU backend (requires nightly Rust)
 simd = []
+# Enable AVX-512 code paths (opt-in due to CPU throttling concerns)
+avx512 = ["simd"]
 # cuda = ["cudarc"]
 
 [profile.release]
