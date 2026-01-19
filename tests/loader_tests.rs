@@ -8,6 +8,7 @@ use rocmforge::loader::{
 };
 use rocmforge::loader::GgufTensorType;
 use anyhow::Context;
+use std::io::Write;
 
 // Use common fixtures
 use common::{create_temp_file, create_test_gguf, create_test_gguf_with_f32, NamedTempFile};

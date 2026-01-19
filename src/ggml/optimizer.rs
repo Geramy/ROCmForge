@@ -745,9 +745,9 @@ mod tests {
         let mut graph = Graph::new();
 
         // Create input tensors in RowMajor layout
-        let mut input_desc = TensorDesc::new(vec![128, 256], crate::ggml::DType::F32, Layout::RowMajor);
-        let mut weight_desc = TensorDesc::new(vec![256, 512], crate::ggml::DType::F32, Layout::RowMajor);
-        let mut output_desc = TensorDesc::new(vec![128, 512], crate::ggml::DType::F32, Layout::RowMajor);
+        let input_desc = TensorDesc::new(vec![128, 256], crate::ggml::DType::F32, Layout::RowMajor);
+        let weight_desc = TensorDesc::new(vec![256, 512], crate::ggml::DType::F32, Layout::RowMajor);
+        let output_desc = TensorDesc::new(vec![128, 512], crate::ggml::DType::F32, Layout::RowMajor);
 
         let input = graph.add_tensor(input_desc.clone());
         let weight = graph.add_tensor(weight_desc.clone());
@@ -781,9 +781,9 @@ mod tests {
         let mut graph = Graph::new();
 
         // Create input tensors in RowMajor
-        let mut input_desc = TensorDesc::new(vec![128, 256], crate::ggml::DType::F32, Layout::RowMajor);
-        let mut bias_desc = TensorDesc::new(vec![128, 256], crate::ggml::DType::F32, Layout::RowMajor);
-        let mut output_desc = TensorDesc::new(vec![128, 256], crate::ggml::DType::F32, Layout::RowMajor);
+        let input_desc = TensorDesc::new(vec![128, 256], crate::ggml::DType::F32, Layout::RowMajor);
+        let bias_desc = TensorDesc::new(vec![128, 256], crate::ggml::DType::F32, Layout::RowMajor);
+        let output_desc = TensorDesc::new(vec![128, 256], crate::ggml::DType::F32, Layout::RowMajor);
 
         let input = graph.add_tensor(input_desc.clone());
         let bias = graph.add_tensor(bias_desc.clone());

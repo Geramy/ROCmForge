@@ -1,6 +1,11 @@
 //! End-to-end transformer layer tests
 //! Tests the complete transformer pipeline including LayerNorm, attention, and MLP
-use rocmforge::backend::gpu_test_common::GPU_FIXTURE;
+
+// Declare common module for test fixtures
+mod common;
+
+use common::GPU_FIXTURE;
+use rocmforge::backend::{DeviceTensor, scratch::ScratchBufferManager};
 use rocmforge::loader::mmap_loader::TensorShape;
 use rocmforge::model::config::{ModelConfig, ModelType};
 use rocmforge::model::execution_plan::ExecutionPlan;
@@ -24,16 +29,16 @@ mod tests {
         let seq_len = 3;
         let hidden_size = 128;
         let input_shape = TensorShape::from_dims(&[batch_size, seq_len, hidden_size]);
-        let mut input_tensor = DeviceTensor::empty(&backend, input_shape).context("TODO: add error context")?;
+        let input_tensor = DeviceTensor::empty(&backend, input_shape).context("TODO: add error context")?;
 
         // Create weight and bias tensors
         let norm_shape = TensorShape::from_dims(&[hidden_size]);
-        let mut weight_tensor = DeviceTensor::empty(&backend, norm_shape.clone()).context("TODO: add error context")?;
-        let mut bias_tensor = DeviceTensor::empty(&backend, norm_shape).context("TODO: add error context")?;
+        let weight_tensor = DeviceTensor::empty(&backend, norm_shape.clone()).context("TODO: add error context")?;
+        let bias_tensor = DeviceTensor::empty(&backend, norm_shape).context("TODO: add error context")?;
 
         // Create output tensor
         let output_shape = TensorShape::from_dims(&[batch_size, seq_len, hidden_size]);
-        let mut output_tensor = DeviceTensor::empty(&backend, output_shape).context("TODO: add error context")?;
+        let output_tensor = DeviceTensor::empty(&backend, output_shape).context("TODO: add error context")?;
 
         // Initialize with test data
         let total_elements = batch_size * seq_len * hidden_size;
@@ -119,20 +124,20 @@ mod tests {
 
         // Create input tensor [seq_len, hidden_size]
         let input_shape = TensorShape::from_dims(&[seq_len, hidden_size]);
-        let mut input_tensor = DeviceTensor::empty(&backend, input_shape).context("TODO: add error context")?;
+        let input_tensor = DeviceTensor::empty(&backend, input_shape).context("TODO: add error context")?;
 
         // Create weight tensors
-        let gate_shape = TensorShape::from_dims(&[hidden_size, intermediate_size]);
-        let up_shape = TensorShape::from_dims(&[hidden_size, intermediate_size]);
-        let down_shape = TensorShape::from_dims(&[intermediate_size, hidden_size]);
+        let _gate_shape = TensorShape::from_dims(&[hidden_size, intermediate_size]);
+        let _up_shape = TensorShape::from_dims(&[hidden_size, intermediate_size]);
+        let _down_shape = TensorShape::from_dims(&[intermediate_size, hidden_size]);
 
-        let mut gate_weight = DeviceTensor::empty(&backend, gate_shape).context("TODO: add error context")?;
-        let mut up_weight = DeviceTensor::empty(&backend, up_shape).context("TODO: add error context")?;
-        let mut down_weight = DeviceTensor::empty(&backend, down_shape).context("TODO: add error context")?;
+        let gate_weight = DeviceTensor::empty(&backend, _gate_shape).context("TODO: add error context")?;
+        let up_weight = DeviceTensor::empty(&backend, _up_shape).context("TODO: add error context")?;
+        let down_weight = DeviceTensor::empty(&backend, _down_shape).context("TODO: add error context")?;
 
         // Create output tensor
         let output_shape = TensorShape::from_dims(&[seq_len, hidden_size]);
-        let mut output_tensor = DeviceTensor::empty(&backend, output_shape).context("TODO: add error context")?;
+        let output_tensor = DeviceTensor::empty(&backend, output_shape).context("TODO: add error context")?;
 
         // Initialize with test data
         let test_input: Vec<f32> = (0..(seq_len * hidden_size))
@@ -235,7 +240,6 @@ mod tests {
         // Create input tensor [batch=1, seq_len=4, hidden_size=256]
         let seq_len = 4;
         let hidden_size = config.hidden_size;
-        let intermediate_size = config.intermediate_size;
         let input_shape = TensorShape::from_dims(&[1, seq_len, hidden_size]);
         let mut input_tensor = DeviceTensor::empty(&backend, input_shape).context("TODO: add error context")?;
 
@@ -251,7 +255,7 @@ mod tests {
         let mut mlp_output = DeviceTensor::empty(&backend, output_shape.clone()).context("TODO: add error context")?;
 
         // Create scratch buffer manager
-        let scratch = ScratchBufferManager::new(
+        let _scratch = ScratchBufferManager::new(
             backend,
             config.num_attention_heads,
             hidden_size,

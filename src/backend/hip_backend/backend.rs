@@ -3719,7 +3719,7 @@ mod tests {
     #[test]
     fn test_hip_event_create_and_destroy() {
         // This test will FAIL initially because HipEvent doesn't exist yet
-        let event = HipEvent::new().expect("Failed to create HIP event");
+        let _event = HipEvent::new().expect("Failed to create HIP event");
         // Event should be automatically destroyed when dropped (RAII)
     }
 
@@ -3786,7 +3786,7 @@ mod tests {
     fn test_async_loader_create() {
         let loader = AsyncLoader::new();
         assert!(loader.is_ok(), "AsyncLoader creation should succeed");
-        let loader = loader.unwrap();
+        let _loader = loader.unwrap();
         // Streams and events are cleaned up on drop
     }
 

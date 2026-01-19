@@ -239,7 +239,7 @@ mod tests {
         assert_eq!(alloc.free_blocks(), 10);
 
         // Allocate again - should reuse IDs
-        let new_block = alloc.allocate().unwrap();
+        let _new_block = alloc.allocate().unwrap();
         assert_eq!(alloc.free_blocks(), 9);
         // The exact ID depends on deallocation order, but some ID should be available
     }

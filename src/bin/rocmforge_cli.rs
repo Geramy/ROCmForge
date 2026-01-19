@@ -688,7 +688,7 @@ async fn create_engine(gguf: &str) -> anyhow::Result<Arc<InferenceEngine>> {
     eprintln!("create_engine: Calling InferenceEngine::from_gguf() (PHASE 24 - uses model-specific config)...");
     // PHASE 24: Use from_gguf() instead of new(EngineConfig::default()) + load_gguf_model()
     // This creates the paged KV cache with correct model dimensions instead of wrong defaults
-    let mut engine = InferenceEngine::from_gguf(gguf).await?;
+    let engine = InferenceEngine::from_gguf(gguf).await?;
     eprintln!("create_engine: from_gguf() returned successfully");
     let engine = Arc::new(engine);
     eprintln!("create_engine: Calling start()...");

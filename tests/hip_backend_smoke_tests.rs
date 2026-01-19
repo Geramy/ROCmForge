@@ -137,7 +137,7 @@ mod tests {
         // Test invalid kernel name
         let module_path = Path::new("src/backend/hip_kernels/smoke_test.hsaco");
         if module_path.exists() {
-            let module = backend.load_module(&module_path.to_string_lossy())?;
+            let _module = backend.load_module(&module_path.to_string_lossy())?;
             let result = backend.get_kernel(&module_path.to_string_lossy(), "nonexistent_kernel");
             assert!(result.is_err(), "Should fail to find nonexistent kernel");
         }
@@ -186,10 +186,10 @@ mod tests {
 
         // This test will be fully implemented when we have actual HIP module loading
         // For now, test the symbol resolution infrastructure
-        let module_path = Path::new("src/backend/hip_kernels/smoke_test.hsaco");
+        let _module_path = Path::new("src/backend/hip_kernels/smoke_test.hsaco");
 
-        if module_path.exists() {
-            let module = backend.load_module(&module_path.to_string_lossy())?;
+        if _module_path.exists() {
+            let _module = backend.load_module(&_module_path.to_string_lossy())?;
 
             // Test valid kernel name
             let kernel_result = backend.get_kernel(&module_path.to_string_lossy(), "add_one");

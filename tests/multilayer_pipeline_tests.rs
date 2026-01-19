@@ -86,10 +86,10 @@ fn test_execution_plan_creation() -> Result<(), HipError> {
     let fixture = GPU_FIXTURE
         .as_ref()
         .expect("GPU not available - test skipped");
-    let backend = fixture.backend();
+    let _backend = fixture.backend();
     let config = ModelConfig::llama2_7b();
 
-    let execution_plan = ExecutionPlan::new(&backend, &config)?;
+    let _execution_plan = ExecutionPlan::new(&_backend, &config)?;
 
     // Verify execution plan was created
     // Note: We can't access internal fields yet since they're not implemented
@@ -108,10 +108,10 @@ fn test_scratch_buffer_creation() -> Result<(), HipError> {
     let fixture = GPU_FIXTURE
         .as_ref()
         .expect("GPU not available - test skipped");
-    let backend = fixture.backend();
-    let config = ModelConfig::llama2_7b();
+    let _backend = fixture.backend();
+    let _config = ModelConfig::llama2_7b();
 
-    let scratch_buffers = backend.create_scratch_buffers(&config)?;
+    let _scratch_buffers = fixture.backend().create_scratch_buffers(&ModelConfig::llama2_7b())?;
 
     // Verify scratch buffers were created
     assert!(true); // Basic assertion that we got here

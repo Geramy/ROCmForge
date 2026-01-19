@@ -391,7 +391,7 @@ mod tests {
         let input_shape = TensorShape::from_dims(&[config.hidden_size]);
         let test_input1: Vec<f32> = (0..config.hidden_size).map(|i| (i as f32 * 0.1)).collect();
 
-        let mut input_tensor1 = DeviceTensor::empty(&backend, input_shape.clone()).context("TODO: add error context")?;
+        let input_tensor1 = DeviceTensor::empty(&backend, input_shape.clone()).context("TODO: add error context")?;
         input_tensor1.buffer().copy_from_host(&test_input1).context("TODO: add error context")?;
 
         let result1 = runtime.decode_step(&input_tensor1);
@@ -405,7 +405,7 @@ mod tests {
             .map(|i| (i as f32 * 0.1) + 0.5)
             .collect();
 
-        let mut input_tensor2 = DeviceTensor::empty(&backend, input_shape).context("TODO: add error context")?;
+        let input_tensor2 = DeviceTensor::empty(&backend, input_shape).context("TODO: add error context")?;
         input_tensor2.buffer().copy_from_host(&test_input2).context("TODO: add error context")?;
 
         let result2 = runtime.decode_step(&input_tensor2);

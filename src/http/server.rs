@@ -1173,7 +1173,7 @@ mod tests {
             attempts += 1;
         }
 
-        let count_before = trace_count();
+        let _count_before = trace_count();
 
         // Query with clear=true
         let query = TracesQuery {
@@ -1224,7 +1224,7 @@ mod tests {
         use crate::metrics::Metrics;
 
         let tokenizer = TokenizerAdapter::default();
-        let mut server = InferenceServer::new(None, tokenizer);
+        let server = InferenceServer::new(None, tokenizer);
 
         // Initialize metrics
         let metrics = Arc::new(Metrics::new());
@@ -1253,7 +1253,7 @@ mod tests {
         use crate::metrics::Metrics;
 
         let tokenizer = TokenizerAdapter::default();
-        let mut server = InferenceServer::new(None, tokenizer);
+        let server = InferenceServer::new(None, tokenizer);
 
         // Initialize metrics with sample data
         let metrics = Arc::new(Metrics::new());

@@ -360,7 +360,7 @@ fn test_token_generation() -> anyhow::Result<()> {
         .unwrap();
 
     // Create batch
-    let batch = scheduler.create_batch().context("Failed to create batch")?;
+    let _batch = scheduler.create_batch().context("Failed to create batch")?;
 
     // Add generated token
     let result = scheduler.add_generated_token(request_id, 42);

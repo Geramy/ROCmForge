@@ -688,7 +688,7 @@ fn test_lru_eviction_when_capacity_exceeded() -> anyhow::Result<()> {
     // Create sequence 3 - should trigger LRU eviction of sequence 1
     cache.allocate_page(3).context("Failed to allocate page")?;
 
-    let stats = cache.get_cache_stats();
+    let _stats = cache.get_cache_stats();
     // Should have evicted sequence 1 (least recently used)
     assert!(cache.get_sequence_tokens(1).is_err());
     assert!(cache.get_sequence_tokens(2).is_ok());

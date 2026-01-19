@@ -132,7 +132,7 @@ fn test_all_required_tensors_present() {
     let execution_plan = ExecutionPlan::from_gguf(&backend, &gguf_loader)
         .expect("Failed to construct ExecutionPlan");
 
-    let config = execution_plan.config();
+    let _config = execution_plan.config();
 
     // Verify all layers have complete weight sets using actual field names
     for (layer_idx, layer_plan) in execution_plan.layers().iter().enumerate() {

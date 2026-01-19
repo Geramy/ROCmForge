@@ -4,13 +4,17 @@
 //! They verify ExecutionPlan construction, fused QKV correctness, attention correctness,
 //! KV cache operations, and full decode_step() functionality.
 
-use rocmforge::backend::gpu_test_common::GPU_FIXTURE;
-use rocmforge::backend::{HipBackend, HipError};
+// Declare common module for test fixtures
+mod common;
+
+use common::GPU_FIXTURE;
+use rocmforge::backend::{DeviceTensor, HipBackend, HipError};
 use serial_test::serial;
 use rocmforge::loader::TensorShape;
 use rocmforge::model::{
     config::{ModelConfig, ModelType},
     kv_cache::KVCache,
+    execution_plan::ExecutionPlan,
 };
 
 // REMOVED: Duplicate test_execution_plan_construction
@@ -102,9 +106,9 @@ fn test_fused_qkv_correctness() {
         .expect("QKV split not implemented yet");
 
     // Copy results back to host
-    let gpu_q = q_tensor.to_host_vec().expect("Failed to copy Q to host");
-    let gpu_k = k_tensor.to_host_vec().expect("Failed to copy K to host");
-    let gpu_v = v_tensor.to_host_vec().expect("Failed to copy V to host");
+    let gpu_q: Vec<f32> = q_tensor.to_host_vec().expect("Failed to copy Q to host");
+    let gpu_k: Vec<f32> = k_tensor.to_host_vec().expect("Failed to copy K to host");
+    let gpu_v: Vec<f32> = v_tensor.to_host_vec().expect("Failed to copy V to host");
 
     // Compare with CPU reference (allowing for small floating point differences)
     for i in 0..cpu_q.len() {
@@ -170,7 +174,7 @@ fn test_attention_correctness() {
     };
 
     // Create scratch buffers and KV cache
-    let mut scratch = backend
+    let _scratch = backend
         .create_scratch_buffers(&config)
         .expect("Failed to create scratch buffers");
     let mut kv_cache = KVCache::new(
@@ -187,7 +191,7 @@ fn test_attention_correctness() {
     let k_data = vec![2.0; seq_len * num_heads * head_dim];
     let v_data = vec![3.0; seq_len * num_heads * head_dim];
 
-    let q_tensor = DeviceTensor::from_host_vec(
+    let _q_tensor = DeviceTensor::from_host_vec(
         backend,
         q_data.clone(),
         TensorShape::from_dims(&[seq_len, num_heads, head_dim]),
@@ -482,7 +486,6 @@ fn compute_cpu_decode_step_reference(
     // Simplified CPU reference for micro-model
     // This would implement the full transformer layer computation
     let hidden_size = config.hidden_size;
-    let intermediate_size = config.intermediate_size;
 
     // For now, return a simple linear projection as reference
     // In a real implementation, this would be the full forward pass
@@ -498,9 +501,9 @@ fn compute_cpu_decode_step_reference(
 }
 
 fn create_micro_model_runtime(
-    backend: &HipBackend,
-    config: &ModelConfig,
-    vocab_size: usize,
+    _backend: &HipBackend,
+    _config: &ModelConfig,
+    _vocab_size: usize,
 ) -> Result<rocmforge::backend::hip_backend::ModelRuntime, HipError> {
     // This would create a ModelRuntime with synthetic weights for testing
     // For now, this will fail until the actual implementation exists

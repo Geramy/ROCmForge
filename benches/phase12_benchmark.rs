@@ -127,7 +127,7 @@ fn benchmark_traditional_vs_continuous_batching() {
     // Simulate continuous batching: keeps processing + adds new
     let bench_continuous = Benchmark::new("Continuous Batching (keep + add)", 1000);
     let result_continuous = bench_continuous.run(|| {
-        let mut processing: Vec<u32> = (0..8).collect(); // Simulating 8 continuing
+        let processing: Vec<u32> = (0..8).collect(); // Simulating 8 continuing
         let mut pending_queue: VecDeque<u32> = (100..200).collect();
         let mut batch = Vec::new();
         let max_batch_size = 16;

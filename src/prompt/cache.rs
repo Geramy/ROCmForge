@@ -526,8 +526,8 @@ mod tests {
 
     #[test]
     fn test_early_exit_detector() {
-        let cache = PrefixCache::new(10, 1024);
-        let mut detector = EarlyExitDetector::new(2);
+        let _cache = PrefixCache::new(10, 1024);
+        let detector = EarlyExitDetector::new(2);
 
         // Insert a cached prefix
         let prefix = CachedPrefix {

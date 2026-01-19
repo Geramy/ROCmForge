@@ -1,6 +1,8 @@
 //! Attention mechanism tests for ROCmForge
 //! Tests Scaled Dot-Product Attention implementation
 
+use rocmforge::backend::hip_backend::HipBuffer;
+
 // Simple deterministic random number generator for testing
 struct SimpleRng {
     seed: u32,
@@ -77,7 +79,7 @@ fn cpu_scaled_dot_product_attention(
 
                 // Compute attention weights (softmax over j dimension)
                 // For simplicity, we'll compute this in the next loop
-                let scores_idx = b * seq_len * seq_len + i * seq_len + j;
+                let _scores_idx = b * seq_len * seq_len + i * seq_len + j;
                 // Store scores for softmax computation
                 // This is simplified - real implementation would do proper softmax
             }
@@ -436,7 +438,7 @@ mod tests {
         );
 
         // Compute without mask
-        let unmasked_output = cpu_scaled_dot_product_attention(
+        let _unmasked_output = cpu_scaled_dot_product_attention(
             &q_data, &k_data, &v_data, batch_size, seq_len, dim, None,
         );
 

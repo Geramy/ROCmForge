@@ -142,7 +142,7 @@ mod tests {
     #[test]
     fn test_optimizer_called_when_enabled() {
         // Create a simple graph
-        let mut graph = Graph::new();
+        let _graph = Graph::new();
         let config = ExecuteConfig::with_optimization();
 
         // The optimizer should process the graph

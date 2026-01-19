@@ -35,8 +35,22 @@
 //! ```
 
 // Submodules
-mod fixtures;
+pub mod fixtures;
 mod tempfile_helpers;
+
+// Re-export commonly used items
+pub use tempfile_helpers::{create_temp_file, create_temp_dir};
+pub use tempfile::NamedTempFile;
+
+// Re-export fixtures
+pub use fixtures::{
+    create_test_gguf,
+    create_test_gguf_with_f32,
+    create_embedding_gguf,
+    create_test_tensor,
+    try_create_backend,
+    create_backend,
+};
 
 use once_cell::sync::Lazy;
 use rocmforge::backend::HipBackend;

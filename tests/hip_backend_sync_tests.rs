@@ -138,7 +138,7 @@ mod tests {
         let backend = fixture.backend();
 
         // Perform some GPU operations
-        let buffer = backend
+        let _buffer = backend
             .allocate_buffer_safe(1024)
             .expect("Failed to allocate");
 

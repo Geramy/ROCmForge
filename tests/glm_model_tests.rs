@@ -206,11 +206,11 @@ mod tests {
         let execution_plan = ExecutionPlan::from_gguf(&backend, &loader)?;
 
         // Create model runtime
-        let mut runtime = ModelRuntime::from_execution_plan_with_backend(execution_plan)?;
+        let runtime = ModelRuntime::from_execution_plan_with_backend(execution_plan)?;
 
         // Create input tensor (single token)
         let input_shape = rocmforge::loader::TensorShape::from_dims(&[1, 512]); // [seq_len=1, hidden_size]
-        let mut input_data = vec![0.1f32; 512]; // Simple test input
+        let input_data = vec![0.1f32; 512]; // Simple test input
         let input_tensor = DeviceTensor::from_host_vec(backend, input_data, input_shape)?;
 
         // Run decode step
@@ -277,10 +277,10 @@ mod tests {
         create_synthetic_glm_model(&model_path)?;
 
         // Load model
-        let fixture = GPU_FIXTURE
-            .as_ref()
-            .expect("GPU not available - test skipped");
-        let backend = fixture.backend();
+        let Some(_fixture) = GPU_FIXTURE.as_ref() else {
+            return Ok(());
+        };
+        let _backend = _fixture.backend();
         let loader = GgufLoader::new(&model_path.to_string_lossy())?;
         let config = loader.to_model_config()?;
 

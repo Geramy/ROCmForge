@@ -2,6 +2,7 @@
 
 use rocmforge::loader::mmap_loader::open_mmap_weights;
 use anyhow::Context;
+use std::io::Write;
 
 #[test]
 fn test_f32_view_basic() -> anyhow::Result<()> {

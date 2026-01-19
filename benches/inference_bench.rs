@@ -729,7 +729,7 @@ fn benchmark_ttft_target_compliance() {
     println!("\n[TTFT Target Compliance (<200ms for 512 tokens)]");
     println!("==================================================");
 
-    let bench = InferenceBench::new();
+    let _bench = InferenceBench::new();
 
     // Key test: 512 token prompt
     let mut profiler = TtftProfiler::new();
