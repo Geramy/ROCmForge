@@ -80,7 +80,6 @@ pub struct ExecutionPlan {
     position_handler: Option<GlmPositionHandler>,
 }
 
-#[allow(dead_code)]
 impl ExecutionPlan {
     /// Create a new execution plan from model configuration
     ///
@@ -2562,25 +2561,6 @@ impl ExecutionPlan {
             num_kv_heads,
             head_dim,
         )
-    }
-
-    /// Try GPU attention computation (internal function, inlined into scaled_dot_product_attention)
-    /// This code is now part of scaled_dot_product_attention to support GQA properly
-    #[allow(dead_code)]
-    fn _legacy_try_gpu_attention(
-        &self,
-        _backend: &HipBackend,
-        _q: &DeviceTensor,
-        _k: &DeviceTensor,
-        _v: &DeviceTensor,
-        _kv_cache: Option<&mut KVCache>,
-        _layer_idx: usize,
-        _seq_len: usize,
-        _num_heads: usize,
-        _head_dim: usize,
-    ) -> HipResult<DeviceTensor> {
-        // This function is now integrated into scaled_dot_product_attention for GQA support
-        Err(HipError::GenericError("Use scaled_dot_product_attention instead".to_string()))
     }
 
     /// Compute attention with CPU fallback (for when GPU path fails or GQA CPU path is needed)
