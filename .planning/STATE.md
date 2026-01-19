@@ -5,21 +5,20 @@
 See: .planning/PROJECT.md (updated 2026-01-19)
 
 **Core value:** Reliable, fast inference on AMD GPUs with transparent CPU fallback.
-**Current focus:** Phase 13-03 - Dead Code Removal
+**Current focus:** v1.1 milestone complete — ready for next milestone
 
 ## Current Position
 
-Phase: 13-03 of 13-03 (Dead Code Removal)
-Plan: 04 of 4
-Status: Phase complete
-Last activity: 2026-01-19 — Phase 13-03-04 completed (unused variable and mut cleanup)
+Phase: Milestone v1.1 COMPLETE
+Status: Ready for next milestone
+Last activity: 2026-01-19 — v1.1 milestone archived
 
-Progress: [████████████████████████████] 100% (102/102 v1.0+v1.1 plans complete)
+Progress: [████████████████████████████] 100% (101/101 v1.0+v1.1 plans complete)
 
 ## Performance Metrics
 
 **Velocity:**
-- Total plans completed: 102
+- Total plans completed: 101
 - Average duration: ~45 min
 - Total execution time: ~73 hours
 
@@ -32,7 +31,7 @@ Progress: [███████████████████████
 | 3 | 4 | ~2h | 30 min |
 | 4 | 4 | ~2h | 30 min |
 | 5 | 4 | ~2h | 30 min |
-| 6 | 4 | ~2.5h | 37 min |
+| 6 | 4 | ~2h | 30 min |
 | 7 | 4 | ~2h | 30 min |
 | 8 | 11 | ~8h | 43 min |
 | 9 | 18 | ~15h | 50 min |
@@ -43,7 +42,7 @@ Progress: [███████████████████████
 | 12.1B | 1 | ~0.5h | 30 min |
 | 13-01 | 1 | ~3min | 3 min |
 | 13-02 | 1 | ~3min | 3 min |
-| 13-03 | 3 | ~14min | 5 min |
+| 13-03 | 4 | ~47min | 12 min |
 
 **Recent Trend:**
 - Last 5 phases: Stable (30-54 min/plan)
@@ -78,15 +77,9 @@ None yet.
 
 ### Completed Work
 
-**Phase 13-02 (2026-01-19):**
-- Verified selective memory pooling was NEVER IMPLEMENTED (no LARGE_TENSOR_THRESHOLD, from_pool() never called)
-- Added status update section to ROCM_D2H_ERROR_RESEARCH.md with verification evidence
-- Changed misleading "Status: COMPLETE" to "Status: DESIGN ONLY - NOT IMPLEMENTED"
-- Created MEMORY_ARCHITECTURE.md documenting actual direct-allocation implementation
-- Verified current approach avoids D2H bug (no sub-buffers exist)
-- Commits: cf575b4, 89cc4d8, a3b8240
+**v1.1 Milestone (2026-01-19):**
 
-**Phase 13-01 (2026-01-19):**
+**Phase 13-01:**
 - Added `calculate_default_head_dim()` method to both `GgufMetadata` structs
 - Fixed `rope.dimension_count` parsing in 4 locations using safe if-let pattern
 - Integrated default calculation call in `load_from_disk()`
@@ -94,15 +87,20 @@ None yet.
 - Verification: 5/5 must_haves passed
 - Commits: 651c25c, 3ea7e0b, ebb9be7, d9b87fc
 
-**Phase 13-03 (2026-01-19):**
+**Phase 13-02:**
+- Verified selective memory pooling was NEVER IMPLEMENTED (no LARGE_TENSOR_THRESHOLD, from_pool() never called)
+- Added status update section to ROCM_D2H_ERROR_RESEARCH.md with verification evidence
+- Changed misleading "Status: COMPLETE" to "Status: DESIGN ONLY - NOT IMPLEMENTED"
+- Created MEMORY_ARCHITECTURE.md documenting actual direct-allocation implementation
+- Verified current approach avoids D2H bug (no sub-buffers exist)
+- Commits: cf575b4, 89cc4d8, a3b8240
+
+**Phase 13-03:**
 - Removed 4 unused functions/constants: transpose_in_place_gpu, LayerPlan::new, _legacy_try_gpu_attention, ATTENTION_MASK_KERNEL
 - Fixed 4 incorrect #[allow(dead_code)] markers (InferenceServer impl, ExecutionPlan impl, HTTP server)
 - Added #[allow(non_camel_case_types)] to GgufTensorType enum for GGUF spec compliance
 - Documented FFI declarations are actively used (not dead code) with explanatory comment
 - Reduced #[allow(dead_code)] markers from 8 to 3 (FFI block + 2 TODO fields)
-- Commits: 82fc1a0, b9c469f, a1acb8e, 8c80260, 3b4fd67, 73c23ee, 4f4a7d6
-
-**Phase 13-03-02 (2026-01-19):**
 - Replaced 30+ direct `copy_to_host()` calls with `copy_from_device_safe()`
 - Updated `matmul_f32()` signature to require backend parameter
 - Fixed 15+ call sites across src/ and tests/
@@ -110,29 +108,22 @@ None yet.
 - Fixed test `copy_to_host` calls in 5 test files
 - Marked 10 tests using `ExecutionPlan::new()` as #[ignore]
 - Resolved all `copy_to_host` deprecation warnings in src/
-- Commits: 8224317, 430a297, eeef489, 9098943, 81513ab
-
-**Phase 13-03-03 (2026-01-19):**
-- Ran `cargo fix` to automatically remove unused imports (93 -> 77 warnings)
+- Ran `cargo fix` + manual cleanup. Removed 93 unused import warnings.
 - Manually removed remaining unused imports from 39 test/benchmark files
 - Fixed cfg-gated imports in build.rs
 - Added missing test imports (Duration, thread) where needed
 - Reduced unused import warnings from 93 to 0
-- All 572 lib tests passing
-- Commits: a65ddc2, 0dc684a, eae4c2c
-
-**Phase 13-03-04 (2026-01-19):**
 - Removed unused variables and unnecessary mut keywords across src/ and tests/
 - Fixed test compilation errors from previous plan's import removal
 - Suppressed deprecated to_host_vec warnings with #[allow(deprecated)] + TODO comments
 - Added #[allow(dead_code)] to kernel cache infrastructure (reserved for future)
 - Added #[allow(non_camel_case_types)] to Q4_K/Q6_K enum variants matching GGUF spec
-- Lib warnings reduced to 28 (from original 406 baseline)
+- Lib warnings reduced to 27 (from original 406 baseline)
 - All 572 lib tests passing
-- Commits: 5ef03db, 8026994, e6cc136, 9ce929b, cc74072
+- Commits: 82fc1a0, b9c469f, a1acb8e, 8c80260, 3b4fd67, 73c23ee, 4f4a7d6, 8224317, 430a297, eeef489, 9098943, 81513ab, a65ddc2, 0dc684a, eae4c2c, 5ef03db, 8026994, e6cc136, 9ce929b, cc74072, 67094a0
 
 ## Session Continuity
 
 Last session: 2026-01-19
-Stopped at: Completed Phase 13-03-04 (unused variable and mut cleanup) - Phase 13-03 complete
+Stopped at: v1.1 milestone archived — ready for next milestone
 Resume file: None
