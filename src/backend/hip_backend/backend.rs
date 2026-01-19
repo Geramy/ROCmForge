@@ -1938,7 +1938,7 @@ impl HipBackend {
     }
 
     pub fn copy_from_gpu<T>(&self, gpu_buffer: &HipBuffer, host_data: &mut [T]) -> HipResult<()> {
-        gpu_buffer.copy_to_host(host_data)
+        self.copy_from_device_safe(gpu_buffer, host_data)
     }
 
     pub fn add_inplace(&self, input: &DeviceTensor, output: &mut DeviceTensor) -> HipResult<()> {
@@ -2228,6 +2228,15 @@ impl DeviceTensor {
     }
 
     /// Copy device data to host vector
+    ///
+    /// ⚠️ **DEPRECATED - Use HipBackend::copy_from_device_safe() instead** ⚠️
+    ///
+    /// This method is deprecated because it implicitly accesses the global backend.
+    /// Use `backend.copy_from_device_safe(&tensor.buffer(), &mut data)` for clearer intent.
+    #[deprecated(
+        since = "0.23.0",
+        note = "Use HipBackend::copy_from_device_safe() with explicit buffer access instead"
+    )]
     pub fn to_host_vec(&self) -> HipResult<Vec<f32>> {
         let mut host_data = vec![0.0f32; self.len()];
         unsafe {
@@ -2650,8 +2659,8 @@ impl HipBackend {
             let mut gate_host = vec![0.0f32; (seq_len * intermediate_size) as usize];
             let mut up_host = vec![0.0f32; (seq_len * intermediate_size) as usize];
 
-            gate_buffer.copy_to_host(&mut gate_host)?;
-            up_buffer.copy_to_host(&mut up_host)?;
+            self.copy_from_device_safe(&gate_buffer, &mut gate_host)?;
+            self.copy_from_device_safe(&up_buffer, &mut up_host)?;
 
             // Apply SwiGLU activation on CPU
             let mut swiglu_host = vec![0.0f32; (seq_len * intermediate_size) as usize];
@@ -2682,7 +2691,7 @@ impl HipBackend {
 
             // Copy result to output tensor
             let mut output_host = vec![0.0f32; (seq_len * hidden_size) as usize];
-            final_buffer.copy_to_host(&mut output_host)?;
+            self.copy_from_device_safe(&final_buffer, &mut output_host)?;
             output.buffer().copy_from_host(&output_host)?;
         }
 
@@ -2745,15 +2754,15 @@ impl HipBackend {
 
         // Copy input to host for computation (GPU kernel would be more efficient)
         let mut input_host = vec![0.0f32; total_elements];
-        input.buffer().copy_to_host(&mut input_host)?;
+        self.copy_from_device_safe(input.buffer(), &mut input_host)?;
 
         // Get weight and bias data
         let mut weight_host = vec![0.0f32; last_dim_size];
-        weight.buffer().copy_to_host(&mut weight_host)?;
+        self.copy_from_device_safe(weight.buffer(), &mut weight_host)?;
 
         let bias_host = if let Some(bias_tensor) = bias {
             let mut bias_data = vec![0.0f32; last_dim_size];
-            bias_tensor.buffer().copy_to_host(&mut bias_data)?;
+            self.copy_from_device_safe(bias_tensor.buffer(), &mut bias_data)?;
             Some(bias_data)
         } else {
             None
@@ -3411,7 +3420,7 @@ impl ModelRuntime {
 }
 
 /// Helper function to copy buffer to host vector
-fn vec_from_buffer(buffer: &HipBuffer, len: usize) -> HipResult<Vec<f32>> {
+fn vec_from_buffer(backend: &HipBackend, buffer: &HipBuffer, len: usize) -> HipResult<Vec<f32>> {
     let mut host_data = vec![0.0f32; len];
     // SAFETY: We check that the buffer size matches our expectation
     let expected_byte_size = len * std::mem::size_of::<f32>();
@@ -3423,7 +3432,7 @@ fn vec_from_buffer(buffer: &HipBuffer, len: usize) -> HipResult<Vec<f32>> {
     }
 
     // Use safe copy method instead of unsafe raw pointer manipulation
-    buffer.copy_to_host(&mut host_data)?;
+    backend.copy_from_device_safe(buffer, &mut host_data)?;
     Ok(host_data)
 }
 
@@ -3672,6 +3681,7 @@ mod tests {
 
     #[test]
     fn test_hip_buffer_copy() {
+        let backend = HipBackend::new().unwrap();
         let buffer = HipBuffer::new(4 * std::mem::size_of::<f32>()).unwrap();
         let host_data = [1.0f32, 2.0, 3.0, 4.0];
         assert!(buffer.copy_from_host(&host_data).is_ok());
@@ -3680,9 +3690,9 @@ mod tests {
         let _ = synchronize_device();
 
         let mut host_result = [0.0f32; 4];
-        assert!(buffer.copy_to_host(&mut host_result).is_ok());
+        backend.copy_from_device_safe(&buffer, &mut host_result).unwrap();
 
-        // Synchronize after copy_to_host to ensure data is fully transferred
+        // Synchronize after copy to ensure data is fully transferred
         let _ = synchronize_device();
 
         assert_eq!(host_data, host_result);
@@ -3742,8 +3752,8 @@ mod tests {
 
         // Do some work
         let mut host_result = vec![0u8; 1024];
-        buffer
-            .copy_to_host(&mut host_result)
+        backend
+            .copy_from_device_safe(&buffer, &mut host_result)
             .expect("Failed to copy to host");
 
         // Record end event
@@ -3777,6 +3787,7 @@ mod tests {
 
     #[test]
     fn test_async_loader_upload_single() {
+        let backend = HipBackend::new().expect("Failed to create backend");
         let loader = AsyncLoader::new().expect("Failed to create AsyncLoader");
         let buffer = HipBuffer::new(1024).expect("Failed to create buffer");
         let host_data = vec![42u8; 1024];
@@ -3792,14 +3803,15 @@ mod tests {
 
         // Verify data was uploaded
         let mut host_result = vec![0u8; 1024];
-        buffer
-            .copy_to_host(&mut host_result)
+        backend
+            .copy_from_device_safe(&buffer, &mut host_result)
             .expect("Copy to host should succeed");
         assert_eq!(host_data, host_result, "Uploaded data should match");
     }
 
     #[test]
     fn test_async_loader_upload_concurrent() {
+        let backend = HipBackend::new().expect("Failed to create backend");
         let loader = AsyncLoader::new().expect("Failed to create AsyncLoader");
 
         // Create multiple buffers
@@ -3824,8 +3836,8 @@ mod tests {
         // Verify all uploads
         for (i, buffer) in buffers.iter().enumerate() {
             let mut host_result = vec![0u8; 1024];
-            buffer
-                .copy_to_host(&mut host_result)
+            backend
+                .copy_from_device_safe(buffer, &mut host_result)
                 .expect("Copy to host should succeed");
             let expected = vec![i as u8; 1024];
             assert_eq!(expected, host_result, "Buffer {} data should match", i);
@@ -3834,6 +3846,7 @@ mod tests {
 
     #[test]
     fn test_async_loader_upload_auto() {
+        let backend = HipBackend::new().expect("Failed to create backend");
         let loader = AsyncLoader::new().expect("Failed to create AsyncLoader");
         let buffer = HipBuffer::new(1024).expect("Failed to create buffer");
         let host_data = vec![99u8; 1024];
@@ -3848,8 +3861,8 @@ mod tests {
             .expect("Synchronization should succeed");
 
         let mut host_result = vec![0u8; 1024];
-        buffer
-            .copy_to_host(&mut host_result)
+        backend
+            .copy_from_device_safe(&buffer, &mut host_result)
             .expect("Copy to host should succeed");
         assert_eq!(host_data, host_result, "Uploaded data should match");
     }
