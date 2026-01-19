@@ -20,17 +20,22 @@
 //! - **Lower latency**: Fewer CPU-GPU synchronizations
 //! - **Better cache utilization**: Data stays in GPU registers/SMEM
 
+#![allow(dead_code)] // Reserved for future fused kernel optimization
+
 use std::path::Path;
 use std::sync::Mutex;
 
 use crate::backend::hip_backend::{HipBackend, HipError, HipKernel, HipModule};
 
 // RDNA3 (wave32) tuning constants
+#[allow(dead_code)] // Reserved for future kernel tuning
 const BLOCK_SIZE: u32 = 256;
+#[allow(dead_code)] // Reserved for future kernel tuning
 const WARP_SIZE: u32 = 32;
 
 /// Cached kernel modules and functions for fused operations
 #[derive(Debug)]
+#[allow(dead_code)] // Reserved for future fused kernel optimization
 struct FusedKernelCache {
     dequant_rmsnorm_module: Option<HipModule>,
     dequant_rmsnorm_kernel: Option<HipKernel>,
@@ -39,9 +44,11 @@ struct FusedKernelCache {
 }
 
 // Global kernel cache (lazy initialization)
+#[allow(dead_code)] // Reserved for future fused kernel optimization
 static GLOBAL_CACHE: Mutex<Option<FusedKernelCache>> = Mutex::new(None);
 
 /// Get or initialize the global fused kernel cache
+#[allow(dead_code)] // Reserved for future fused kernel optimization
 fn get_or_init_cache() -> Result<&'static Mutex<Option<FusedKernelCache>>, HipError> {
     // First check if already initialized
     {

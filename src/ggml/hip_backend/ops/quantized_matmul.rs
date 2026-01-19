@@ -65,6 +65,7 @@ const Q6_K_ELEMENTS_PER_BLOCK: usize = 256;  // Elements per block
 
 /// Cached kernel modules and functions for quantized matmul operations
 #[derive(Debug)]
+#[allow(dead_code)] // Reserved for future quantized matmul optimization
 struct Q4_0KernelCache {
     module: Option<HipModule>,
     kernel: Option<HipKernel>,
@@ -72,6 +73,8 @@ struct Q4_0KernelCache {
 
 /// Cached kernel modules and functions for Q4_K matmul
 #[derive(Debug)]
+#[allow(non_camel_case_types)] // Matches GGUF quantization format naming
+#[allow(dead_code)] // Reserved for future quantized matmul optimization
 struct Q4_KKernelCache {
     module: Option<HipModule>,
     kernel: Option<HipKernel>,
@@ -79,17 +82,23 @@ struct Q4_KKernelCache {
 
 /// Cached kernel modules and functions for Q6_K matmul
 #[derive(Debug)]
+#[allow(non_camel_case_types)] // Matches GGUF quantization format naming
+#[allow(dead_code)] // Reserved for future quantized matmul optimization
 struct Q6_KKernelCache {
     module: Option<HipModule>,
     kernel: Option<HipKernel>,
 }
 
 // Global kernel caches
+#[allow(dead_code)] // Reserved for future quantized matmul optimization
 static Q4_0_CACHE: Mutex<Option<Q4_0KernelCache>> = Mutex::new(None);
+#[allow(dead_code)] // Reserved for future quantized matmul optimization
 static Q4_K_CACHE: Mutex<Option<Q4_KKernelCache>> = Mutex::new(None);
+#[allow(dead_code)] // Reserved for future quantized matmul optimization
 static Q6_K_CACHE: Mutex<Option<Q6_KKernelCache>> = Mutex::new(None);
 
 /// Get or initialize the global Q4_0 kernel cache
+#[allow(dead_code)] // Reserved for future quantized matmul optimization
 fn get_or_init_q4_0_cache() -> Result<&'static Mutex<Option<Q4_0KernelCache>>, HipError> {
     // First check if already initialized
     {
@@ -138,6 +147,7 @@ fn get_or_init_q4_0_cache() -> Result<&'static Mutex<Option<Q4_0KernelCache>>, H
 }
 
 /// Get or initialize the global Q4_K kernel cache
+#[allow(dead_code)] // Reserved for future quantized matmul optimization
 fn get_or_init_q4_k_cache() -> Result<&'static Mutex<Option<Q4_KKernelCache>>, HipError> {
     // First check if already initialized
     {
@@ -186,6 +196,7 @@ fn get_or_init_q4_k_cache() -> Result<&'static Mutex<Option<Q4_KKernelCache>>, H
 }
 
 /// Get or initialize the global Q6_K kernel cache
+#[allow(dead_code)] // Reserved for future quantized matmul optimization
 fn get_or_init_q6_k_cache() -> Result<&'static Mutex<Option<Q6_KKernelCache>>, HipError> {
     // First check if already initialized
     {
