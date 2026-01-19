@@ -190,8 +190,8 @@ impl GgmlBackend for HipGgmlBackend {
 
                 eprintln!(">>> execute_op: GetRows about to copy tokens to host (actual_n_tokens={})...", actual_n_tokens);
                 let mut tokens = vec![0u32; actual_n_tokens];
-                tokens_buf
-                    .copy_to_host(&mut tokens)
+                self.backend
+                    .copy_from_device_safe(&tokens_buf, &mut tokens)
                     .map_err(|e| GgmlError::Backend(e.to_string()))?;
                 eprintln!(">>> execute_op: GetRow tokens copied to host (full buffer): {:?}", &tokens[..tokens.len().min(10)]);
 

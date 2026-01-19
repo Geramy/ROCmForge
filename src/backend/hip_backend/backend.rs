@@ -2584,6 +2584,7 @@ impl HipBackend {
         // hidden_states: [seq_len, hidden_size], gate_weight: [hidden_size, intermediate_size]
         // gate_output: [seq_len, intermediate_size]
         let gate_buffer = matmul_f32(
+            self,
             &blas_handle,
             hidden_states.buffer(),
             gate_weight.buffer(),
@@ -2597,6 +2598,7 @@ impl HipBackend {
         // hidden_states: [seq_len, hidden_size], up_weight: [hidden_size, intermediate_size]
         // up_output: [seq_len, intermediate_size]
         let up_buffer = matmul_f32(
+            self,
             &blas_handle,
             hidden_states.buffer(),
             up_weight.buffer(),
@@ -2639,6 +2641,7 @@ impl HipBackend {
 
             // Step 4: Compute down projection: swiglu_output @ down_weight -> final_output
             let final_buffer = matmul_f32(
+                self,
                 &blas_handle,
                 &swiglu_buffer,
                 down_weight.buffer(),
@@ -2680,6 +2683,7 @@ impl HipBackend {
 
             // Step 4: Compute down projection: swiglu_output @ down_weight -> final_output
             let final_buffer = matmul_f32(
+                self,
                 &blas_handle,
                 &swiglu_buffer,
                 down_weight.buffer(),

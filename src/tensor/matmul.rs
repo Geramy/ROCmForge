@@ -38,6 +38,7 @@ pub type MatmulResult<T> = Result<T, MatmulError>;
 /// Returns:
 /// - GPU buffer containing matrix C (m×n)
 pub fn matmul_f32(
+    backend: &crate::backend::HipBackend,
     handle: &HipBlasHandle,
     a: &HipBuffer,
     b: &HipBuffer,
@@ -134,7 +135,7 @@ pub fn matmul_f32(
         // Transpose A (m×k row-major to k×m column-major)
         let mut a_col_major = vec![0.0f32; (m * k) as usize];
         let mut a_host = vec![0.0f32; (m * k) as usize];
-        a.copy_to_host(&mut a_host)?;
+        backend.copy_from_device_safe(a, &mut a_host)?;
         for i in 0..m as usize {
             for j in 0..k as usize {
                 a_col_major[j * m as usize + i] = a_host[i * k as usize + j];
@@ -144,7 +145,7 @@ pub fn matmul_f32(
         // Transpose B (k×n row-major to n×k column-major)
         let mut b_col_major = vec![0.0f32; (k * n) as usize];
         let mut b_host = vec![0.0f32; (k * n) as usize];
-        b.copy_to_host(&mut b_host)?;
+        backend.copy_from_device_safe(b, &mut b_host)?;
         for i in 0..k as usize {
             for j in 0..n as usize {
                 b_col_major[j * k as usize + i] = b_host[i * n as usize + j];
@@ -179,7 +180,7 @@ pub fn matmul_f32(
 
     // The result is in column-major order. We need to transpose it to row-major.
     let mut host_col_major = vec![0.0f32; (m * n) as usize];
-    c.copy_to_host(&mut host_col_major)?;
+    backend.copy_from_device_safe(&c, &mut host_col_major)?;
 
     let mut host_row_major = vec![0.0f32; (m * n) as usize];
     for i in 0..m as usize {
