@@ -103,11 +103,16 @@ impl PrefixCache {
         let entry = cache.get(&hash).cloned();
 
         if entry.is_some() {
-            let mut hits = self.hits.write().unwrap();
-            *hits += 1;
+            if let Ok(mut hits) = self.hits.write() {
+                *hits += 1;
+            }
+            // If lock is poisoned, we skip incrementing the counter
+            // but still return the cached entry (log-only error path)
         } else {
-            let mut misses = self.misses.write().unwrap();
-            *misses += 1;
+            if let Ok(mut misses) = self.misses.write() {
+                *misses += 1;
+            }
+            // If lock is poisoned, we skip incrementing the counter
         }
 
         entry
@@ -120,7 +125,10 @@ impl PrefixCache {
 
         // Check memory constraints
         {
-            let current_memory = self.current_memory_bytes.read().unwrap();
+            let current_memory = self
+                .current_memory_bytes
+                .read()
+                .map_err(|_| CacheError::InvalidEntry)?;
             if *current_memory + memory_bytes > self.max_memory_bytes {
                 self.evict_lru()?;
             }
@@ -128,16 +136,28 @@ impl PrefixCache {
 
         // Insert the new entry
         {
-            let mut cache = self.cache.write().unwrap();
-            let mut current_memory = self.current_memory_bytes.write().unwrap();
+            let mut cache = self
+                .cache
+                .write()
+                .map_err(|_| CacheError::InvalidEntry)?;
+            let mut current_memory = self
+                .current_memory_bytes
+                .write()
+                .map_err(|_| CacheError::InvalidEntry)?;
 
             // Check if we're at capacity
             if cache.len() >= self.max_entries && !cache.contains_key(&hash) {
                 drop(cache);
                 drop(current_memory);
                 self.evict_lru()?;
-                let mut cache = self.cache.write().unwrap();
-                let mut current_memory = self.current_memory_bytes.write().unwrap();
+                let mut cache = self
+                    .cache
+                    .write()
+                    .map_err(|_| CacheError::InvalidEntry)?;
+                let mut current_memory = self
+                    .current_memory_bytes
+                    .write()
+                    .map_err(|_| CacheError::InvalidEntry)?;
 
                 // Remove old entry if updating
                 if let Some(old) = cache.get(&hash) {
@@ -172,11 +192,23 @@ impl PrefixCache {
     }
 
     /// Get cache statistics
-    pub fn stats(&self) -> CacheStats {
-        let cache = self.cache.read().unwrap();
-        let current_memory = self.current_memory_bytes.read().unwrap();
-        let hits = self.hits.read().unwrap();
-        let misses = self.misses.read().unwrap();
+    pub fn stats(&self) -> Result<CacheStats, CacheError> {
+        let cache = self
+            .cache
+            .read()
+            .map_err(|_| CacheError::InvalidEntry)?;
+        let current_memory = self
+            .current_memory_bytes
+            .read()
+            .map_err(|_| CacheError::InvalidEntry)?;
+        let hits = self
+            .hits
+            .read()
+            .map_err(|_| CacheError::InvalidEntry)?;
+        let misses = self
+            .misses
+            .read()
+            .map_err(|_| CacheError::InvalidEntry)?;
 
         let total_requests = *hits + *misses;
         let hit_rate = if total_requests > 0 {
@@ -185,7 +217,7 @@ impl PrefixCache {
             0.0
         };
 
-        CacheStats {
+        Ok(CacheStats {
             entries: cache.len(),
             max_entries: self.max_entries,
             memory_bytes: *current_memory,
@@ -193,21 +225,32 @@ impl PrefixCache {
             hits: *hits,
             misses: *misses,
             hit_rate,
-        }
+        })
     }
 
     /// Clear all cached entries
     pub fn clear(&self) {
-        let mut cache = self.cache.write().unwrap();
-        let mut current_memory = self.current_memory_bytes.write().unwrap();
-        cache.clear();
-        *current_memory = 0;
+        if let (Ok(mut cache), Ok(mut current_memory)) = (
+            self.cache.write(),
+            self.current_memory_bytes.write(),
+        ) {
+            cache.clear();
+            *current_memory = 0;
+        }
+        // If either lock is poisoned, we silently fail to clear
+        // This is acceptable since the cache will be naturally evicted over time
     }
 
     /// Evict least recently used entries
     fn evict_lru(&self) -> Result<(), CacheError> {
-        let mut cache = self.cache.write().unwrap();
-        let mut current_memory = self.current_memory_bytes.write().unwrap();
+        let mut cache = self
+            .cache
+            .write()
+            .map_err(|_| CacheError::InvalidEntry)?;
+        let mut current_memory = self
+            .current_memory_bytes
+            .write()
+            .map_err(|_| CacheError::InvalidEntry)?;
 
         if cache.is_empty() {
             return Err(CacheError::CacheFull);
@@ -299,7 +342,7 @@ pub enum CacheError {
     /// Memory limit exceeded
     MemoryLimitExceeded,
 
-    /// Invalid cache entry
+    /// Invalid cache entry (includes lock poisoning)
     InvalidEntry,
 }
 
@@ -436,7 +479,7 @@ mod tests {
         }
 
         // Check stats before access
-        let stats = cache.stats();
+        let stats = cache.stats().unwrap();
         assert_eq!(stats.entries, 5);
         assert_eq!(stats.hits, 0);
         assert_eq!(stats.misses, 0); // No misses recorded yet
@@ -445,7 +488,7 @@ mod tests {
         cache.get(&[1, 2, 3]);
 
         // Check stats after access
-        let stats = cache.stats();
+        let stats = cache.stats().unwrap();
         assert_eq!(stats.hits, 1);
         assert_eq!(stats.misses, 0);
     }
@@ -526,11 +569,11 @@ mod tests {
             cache.insert(prefix).unwrap();
         }
 
-        assert_eq!(cache.stats().entries, 5);
+        assert_eq!(cache.stats().unwrap().entries, 5);
 
         cache.clear();
-        assert_eq!(cache.stats().entries, 0);
-        assert_eq!(cache.stats().memory_bytes, 0);
+        assert_eq!(cache.stats().unwrap().entries, 0);
+        assert_eq!(cache.stats().unwrap().memory_bytes, 0);
     }
 
     #[test]

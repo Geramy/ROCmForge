@@ -60,6 +60,22 @@ pub struct Metrics {
 
     /// Tokens per second throughput
     pub tokens_per_second: Gauge<f64, AtomicU64>,
+
+    // ========== Phase 10-20: Retry Metrics ==========
+
+    /// Total number of retry attempts for GPU operations
+    pub gpu_retry_attempts_total: Counter<u64>,
+
+    /// Total number of operations that succeeded after retry
+    pub gpu_retry_success_total: Counter<u64>,
+
+    /// Total number of operations that failed after all retries
+    pub gpu_retry_failed_total: Counter<u64>,
+
+    /// Retry attempt histogram (which retry attempt succeeded)
+    pub gpu_retry_attempt_histogram: Histogram,
+
+    // ========== End Phase 10-20 Retry Metrics ==========
 }
 
 impl Metrics {
@@ -159,6 +175,35 @@ impl Metrics {
             tokens_per_second.clone(),
         );
 
+        // Retry metrics
+        let gpu_retry_attempts_total = Counter::default();
+        registry.register(
+            "rocmforge_gpu_retry_attempts_total",
+            "Total number of retry attempts for GPU operations",
+            gpu_retry_attempts_total.clone(),
+        );
+
+        let gpu_retry_success_total = Counter::default();
+        registry.register(
+            "rocmforge_gpu_retry_success_total",
+            "Total number of operations that succeeded after retry",
+            gpu_retry_success_total.clone(),
+        );
+
+        let gpu_retry_failed_total = Counter::default();
+        registry.register(
+            "rocmforge_gpu_retry_failed_total",
+            "Total number of operations that failed after all retries",
+            gpu_retry_failed_total.clone(),
+        );
+
+        let gpu_retry_attempt_histogram = Histogram::new(exponential_buckets(1.0, 2.0, 5));
+        registry.register(
+            "rocmforge_gpu_retry_attempt_histogram",
+            "Retry attempt histogram (which retry attempt succeeded)",
+            gpu_retry_attempt_histogram.clone(),
+        );
+
         Metrics {
             registry,
             requests_started,
@@ -173,6 +218,10 @@ impl Metrics {
             active_requests,
             ttft_seconds,
             tokens_per_second,
+            gpu_retry_attempts_total,
+            gpu_retry_success_total,
+            gpu_retry_failed_total,
+            gpu_retry_attempt_histogram,
         }
     }
 
@@ -235,6 +284,59 @@ impl Metrics {
     pub fn set_tokens_per_second(&self, tps: f64) {
         self.tokens_per_second.set(tps);
     }
+
+    // ========== Phase 10-20: Retry Metric Methods ==========
+
+    /// Record a GPU retry attempt
+    ///
+    /// Call this when a recoverable GPU error triggers a retry.
+    ///
+    /// # Arguments
+    /// * `operation` - The operation being retried (e.g., "copy_from_device")
+    /// * `attempt` - Which attempt this is (0 = first retry)
+    pub fn record_gpu_retry_attempt(&self, operation: &str, attempt: u64) {
+        self.gpu_retry_attempts_total.inc();
+        self.gpu_retry_attempt_histogram.observe(attempt as f64);
+        tracing::debug!(
+            operation = operation,
+            attempt = attempt,
+            "Recorded GPU retry attempt"
+        );
+    }
+
+    /// Record a successful GPU retry
+    ///
+    /// Call this when an operation succeeds after being retried.
+    ///
+    /// # Arguments
+    /// * `operation` - The operation that succeeded after retry
+    /// * `attempts` - Total number of attempts including the successful one
+    pub fn record_gpu_retry_success(&self, operation: &str, attempts: u64) {
+        self.gpu_retry_success_total.inc();
+        tracing::info!(
+            operation = operation,
+            attempts = attempts,
+            "Operation succeeded after retry"
+        );
+    }
+
+    /// Record a failed GPU retry (all retries exhausted)
+    ///
+    /// Call this when an operation fails after all retry attempts.
+    ///
+    /// # Arguments
+    /// * `operation` - The operation that failed
+    /// * `attempts` - Total number of attempts made
+    pub fn record_gpu_retry_failed(&self, operation: &str, attempts: u64) {
+        self.gpu_retry_failed_total.inc();
+        tracing::warn!(
+            operation = operation,
+            attempts = attempts,
+            "Operation failed after all retries"
+        );
+    }
+
+    // ========== End Phase 10-20 Retry Metric Methods ==========
 
     /// Export metrics in Prometheus text format
     pub fn export(&self) -> String {
