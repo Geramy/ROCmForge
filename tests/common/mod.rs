@@ -13,6 +13,8 @@
 //! 2. Using conservative memory allocation (70% of free)
 //! 3. Providing memory leak detection
 //! 4. Running tests serially (one at a time)
+
+#![allow(deprecated)] // TODO: Migrate from to_host_vec() to copy_from_device_safe() (Phase 13-03-02)
 //!
 //! # Usage
 //!
@@ -39,7 +41,7 @@ pub mod fixtures;
 mod tempfile_helpers;
 
 // Re-export commonly used items
-pub use tempfile_helpers::{create_temp_file, create_temp_dir};
+pub use tempfile_helpers::create_temp_file;
 pub use tempfile::NamedTempFile;
 
 // Re-export fixtures

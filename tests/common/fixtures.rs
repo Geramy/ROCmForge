@@ -3,6 +3,8 @@
 //! This module consolidates duplicate fixture code from multiple test files
 //! into a single location for easier maintenance.
 
+#![allow(deprecated)] // TODO: Migrate from to_host_vec() to copy_from_device_safe() (Phase 13-03-02)
+
 use rocmforge::backend::HipBackend;
 use rocmforge::loader::{gguf::GgufTensor, GgufTensorType, TensorShape};
 use std::fs::File;

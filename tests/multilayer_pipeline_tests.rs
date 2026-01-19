@@ -6,6 +6,8 @@
 //! - Multi-layer transformer pipeline
 //! - Complete decode_step() integration
 
+#![allow(deprecated)] // TODO: Migrate from to_host_vec() to copy_from_device_safe() (Phase 13-03-02)
+
 use rocmforge::backend::gpu_test_common::GPU_FIXTURE;
 use rocmforge::backend::{DeviceTensor, HipError};
 use rocmforge::loader::TensorShape;

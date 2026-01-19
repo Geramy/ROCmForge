@@ -2,7 +2,8 @@
 //!
 //! Test suite for GLM model loading and inference functionality.
 
-use serial_test::serial;
+#![allow(deprecated)] // TODO: Migrate from to_host_vec() to copy_from_device_safe() (Phase 13-03-02)
+
 use anyhow::Context;
 use std::fs;
 use std::path::Path;

@@ -10,8 +10,6 @@ mod tests {
     use rocmforge::loader::mmap_loader::TensorShape;
     use rocmforge::model::config::ModelConfig;
     use rocmforge::model::kv_cache::KVCache;
-    use rocmforge::ops::attention_gpu::HipAttentionKernels;
-    use serial_test::serial;
 
     /// Test basic HIP backend creation for attention kernels
     #[test]

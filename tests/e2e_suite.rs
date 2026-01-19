@@ -13,6 +13,8 @@
 //! 4. **Concurrent Stress Test** - Verify thread safety with multiple loaders
 //! 5. **Cache Behavior** - Document cache hit/miss patterns
 //! 6. **Memory Safety** - Verify no memory leaks
+
+#![allow(deprecated)] // TODO: Migrate from to_host_vec() to copy_from_device_safe() (Phase 13-03-02)
 //!
 //! ## Part 2: High-Level Inference Pipeline (6 tests)
 //! 7. **Model Loading E2E** - Load real GGUF models and validate structure

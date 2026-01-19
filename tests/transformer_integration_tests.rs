@@ -1,6 +1,8 @@
 //! End-to-end transformer layer tests
 //! Tests the complete transformer pipeline including LayerNorm, attention, and MLP
 
+#![allow(deprecated)] // TODO: Migrate from to_host_vec() to copy_from_device_safe() (Phase 13-03-02)
+
 // Declare common module for test fixtures
 mod common;
 

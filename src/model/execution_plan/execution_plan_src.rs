@@ -2,6 +2,8 @@
 // It will be gradually modularized into separate files
 // See mod.rs for module-level documentation
 
+#![allow(deprecated)] // TODO: Migrate from to_host_vec() to copy_from_device_safe() (Phase 13-03-02)
+
 use super::{Architecture, LayerPlan};
 use super::ggml_plan::{EmbeddingGgmlPlan, RopeCache, LayerGgmlPlan};
 

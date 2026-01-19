@@ -4,6 +4,8 @@
 //! They verify ExecutionPlan construction, fused QKV correctness, attention correctness,
 //! KV cache operations, and full decode_step() functionality.
 
+#![allow(deprecated)] // TODO: Migrate from to_host_vec() to copy_from_device_safe() (Phase 13-03-02)
+
 // Declare common module for test fixtures
 mod common;
 

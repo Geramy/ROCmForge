@@ -3,6 +3,8 @@
 //! Implements paged attention computation for non-contiguous KV cache blocks.
 //! This is the core of PagedAttention-style memory management for LLM inference.
 
+#![allow(deprecated)] // TODO: Migrate from to_host_vec() to copy_from_device_safe() (Phase 13-03-02)
+
 use crate::backend::{DeviceTensor, HipBackend, HipError, HipResult};
 use std::sync::Arc;
 
