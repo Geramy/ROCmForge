@@ -1132,8 +1132,8 @@ impl GgmlBackend for HipGgmlBackend {
 
                 // Read quantized weights from GPU
                 let mut quantized_data = vec![0u8; weights_desc.byte_size()];
-                weights_buf
-                    .copy_to_host(&mut quantized_data)
+                self.backend
+                    .copy_from_device_safe(&weights_buf, &mut quantized_data)
                     .map_err(|e| GgmlError::Backend(format!("Failed to read weights: {}", e)))?;
 
                 // Perform dequantize + matmul
@@ -1209,8 +1209,8 @@ impl GgmlBackend for HipGgmlBackend {
 
                 // Read quantized weights from GPU
                 let mut quantized_data = vec![0u8; weights_desc.byte_size()];
-                weights_buf
-                    .copy_to_host(&mut quantized_data)
+                self.backend
+                    .copy_from_device_safe(&weights_buf, &mut quantized_data)
                     .map_err(|e| GgmlError::Backend(format!("Failed to read weights: {}", e)))?;
 
                 // Perform dequantize + matmul

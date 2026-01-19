@@ -2237,6 +2237,7 @@ impl DeviceTensor {
         since = "0.23.0",
         note = "Use HipBackend::copy_from_device_safe() with explicit buffer access instead"
     )]
+    #[allow(deprecated)] // Allow internal use of deprecated copy_to_host in this deprecated method
     pub fn to_host_vec(&self) -> HipResult<Vec<f32>> {
         let mut host_data = vec![0.0f32; self.len()];
         unsafe {
